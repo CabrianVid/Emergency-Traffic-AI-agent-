@@ -70,6 +70,7 @@ def generate_routes(
     amb_dest_node: str = "A6",
     amb_depart_s: float = 0.0,
     horizon_s: float = 120.0,
+    background_flows=None,
 ) -> dict:
     """Writes a deterministic route file: a background-traffic vType plus a
     handful of fixed-period corner-to-corner flows, and one `vClass=emergency`
@@ -101,7 +102,7 @@ def generate_routes(
                   'guiShape="delivery" color="0,0.4,1"/>')
 
     flows_written = []
-    for i, (origin, dest, period) in enumerate(_BACKGROUND_FLOWS):
+    for i, (origin, dest, period) in enumerate(_BACKGROUND_FLOWS if background_flows is None else background_flows):
         edges = _edge_path_ids(net, origin, dest)
         flow_id = f"bg{i}"
         # A `<route>` child element (not an `edges=` attribute) is required

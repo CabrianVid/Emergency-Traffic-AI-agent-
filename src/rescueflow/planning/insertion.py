@@ -102,6 +102,7 @@ def recompute_tail(
     given stops[:from_index] already has correct times (or from_index == 0,
     in which case we start from the vehicle's current free node/time)."""
     node, time_s = _node_and_time_before(vehicle, stops, from_index)
+    time_s = max(time_s, world.sim_time_s)
     for stop in stops[from_index:]:
         travel_s = _eta_s(travel, vehicle.mode, node, stop.node_id, time_s)
         arrival = time_s + travel_s
@@ -152,7 +153,11 @@ def try_insert(
         )
         trial = locked_prefix_copy + unlocked_copy[:i] + [pickup, dropoff] + unlocked_copy[i:]
         old_span_tail_start = start + i
-        recompute_tail(world, travel, vehicle, trial, old_span_tail_start)
+        try:
+            recompute_tail(world, travel, vehicle, trial, old_span_tail_start)
+        except ValueError:
+            # A closed/disconnected road makes this insertion infeasible.
+            continue
 
         trial_proposal = PlanProposal(
             proposal_id="trial", based_on_plan_revision=world.plan_revision, proposed_at_sim_s=world.sim_time_s,
@@ -168,7 +173,7 @@ def try_insert(
             else vehicle.available_after_s
         )
         new_last_departure = trial[-1].departure_s or 0.0
-        added_travel_s = max(0.0, new_last_departure - old_last_departure)
+        added_travel_s = max(0.0, new_last_departure - max(old_last_departure, world.sim_time_s))
 
         candidates.append(InsertionCandidate(vehicle_id=vehicle.id, stops=trial, added_travel_s=added_travel_s, insertion_index=i))
 

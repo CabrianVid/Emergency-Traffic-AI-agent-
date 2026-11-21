@@ -56,7 +56,8 @@ HOSPITAL_H2 = ReceivingSite(
 
 
 def _two_stop_route(
-    vehicle: Vehicle, task: Task, travel: TravelTimeProvider, start_time_s: float
+    vehicle: Vehicle, task: Task, travel: TravelTimeProvider, start_time_s: float,
+    receiving_sites=(HOSPITAL_H1, HOSPITAL_H2),
 ) -> tuple[list[Stop], float]:
     mode = vehicle.mode
     eta_pickup = (
@@ -73,7 +74,7 @@ def _two_stop_route(
     )
     dropoff_arrival = pickup_departure + eta_dropoff
     handling = next(
-        (s.service_handling_s for s in (HOSPITAL_H1, HOSPITAL_H2) if s.node_id == task.dropoff_node), 0.0
+        (s.service_handling_s for s in receiving_sites if s.node_id == task.dropoff_node), 0.0
     )
     dropoff_departure = dropoff_arrival + task.unload_seconds + handling
 
@@ -92,10 +93,12 @@ def _two_stop_route(
     return [pickup_stop, dropoff_stop], dropoff_departure
 
 
-def build_initial_world(travel: TravelTimeProvider, sim_time_s: float = 120.0) -> WorldState:
+def build_initial_world(
+    travel: TravelTimeProvider, sim_time_s: float = 120.0, *, node_mapping: dict[str, str] | None = None
+) -> WorldState:
     world = WorldState(sim_time_s=sim_time_s)
 
-    world.receiving_sites = {"H1": HOSPITAL_H1, "H2": HOSPITAL_H2}
+    world.receiving_sites = {site.id: site.model_copy(deep=True) for site in (HOSPITAL_H1, HOSPITAL_H2)}
 
     t2 = Task(
         id="T2", kind=TaskKind.patient_transport, priority=TaskPriority.critical,
@@ -141,16 +144,13 @@ def build_initial_world(travel: TravelTimeProvider, sim_time_s: float = 120.0) -
     r2 = Vehicle(id="R2", mode=VehicleMode.ambulance, status=VehicleStatus.carrying, node_id="B1",
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"],
                  equipment_aboard=["K1"], locked_stop_index=1)
-    r2.route_stops, _ = _two_stop_route(r2, t3, travel, start_time_s=0.0)
 
     r3 = Vehicle(id="R3", mode=VehicleMode.ambulance, status=VehicleStatus.carrying, node_id="D3",
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"], locked_stop_index=1)
-    r3.route_stops, _ = _two_stop_route(r3, t2, travel, start_time_s=0.0)
 
     r5 = Vehicle(id="R5", mode=VehicleMode.ambulance, status=VehicleStatus.assigned, node_id="G5",
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"],
                  available_after_s=sim_time_s)
-    r5.route_stops, _ = _two_stop_route(r5, t5, travel, start_time_s=sim_time_s)
 
     world.vehicles = {v.id: v for v in (r1, r2, r3, r4, r5, heli)}
     world.tasks = {t.id: t for t in (t1, t2, t3, t4, t5, t6, t7)}
@@ -158,6 +158,18 @@ def build_initial_world(travel: TravelTimeProvider, sim_time_s: float = 120.0) -
         "K1": Asset(id="K1", capacity_units=1, location=AssetLocation(kind="vehicle", ref_id="R2"), status="in_transit"),
         "K2": Asset(id="K2", capacity_units=1, location=AssetLocation(kind="depot", ref_id="F5"), status="available"),
     }
+    if node_mapping is not None:
+        for site in world.receiving_sites.values():
+            site.node_id = node_mapping[site.node_id]
+        for vehicle in world.vehicles.values():
+            vehicle.node_id = node_mapping[vehicle.node_id]
+        for task in world.tasks.values():
+            task.pickup_node = node_mapping[task.pickup_node]
+            task.dropoff_node = node_mapping[task.dropoff_node]
+        world.assets["K2"].location.ref_id = node_mapping["F5"]
+
+    for vehicle, task, start in ((r2, t3, 0.0), (r3, t2, 0.0), (r5, t5, sim_time_s)):
+        vehicle.route_stops, _ = _two_stop_route(vehicle, task, travel, start, world.receiving_sites.values())
     return world
 
 

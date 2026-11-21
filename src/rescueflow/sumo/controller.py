@@ -49,11 +49,15 @@ HOSPITAL_HOLD_S = 2_000_000.0
 class TraciSimulationController:
     """Concrete `SimulationController`."""
 
-    def __init__(self, sumocfg_path: str, net_path: str, state_path: str = DEFAULT_STATE_PATH, seed: int = 42) -> None:
+    def __init__(
+        self, sumocfg_path: str, net_path: str, state_path: str = DEFAULT_STATE_PATH,
+        seed: int = 42, *, allow_teleport: bool = True,
+    ) -> None:
         self.sumocfg_path = sumocfg_path
         self.net_path = net_path
         self.state_path = state_path
         self.seed = seed
+        self.allow_teleport = allow_teleport
         self._connected = False
         self._travel: SumoTravelTimeProvider | None = None
         self.green_wave = GreenWaveController()
@@ -62,6 +66,7 @@ class TraciSimulationController:
         self._stop_queue: dict[str, list[dict]] = {}
         self._next_stop_ptr: dict[str, int] = {}
         self._was_stopped: dict[str, bool] = {}
+        self._civilian_loss_s: dict[str, float] = {}
 
     # -- connection lifecycle -------------------------------------------------
 
@@ -86,11 +91,14 @@ class TraciSimulationController:
         ]
         if resume and self.has_saved_state():
             args += ["--load-state", self.state_path]
+        if not self.allow_teleport:
+            args += ["--time-to-teleport", "-1"]
         traci.start(args)
         self._connected = True
         self._ensure_travel().set_closed_edges(world.closed_edges)
         if resume:
             self._rebuild_queues_from_world(world)
+            self._set_road_permissions(world.closed_edges)
 
     def save_and_close(self) -> None:
         if not self._connected:
@@ -117,6 +125,7 @@ class TraciSimulationController:
         self._next_stop_ptr.clear()
         self._was_stopped.clear()
         self.event_log.clear()
+        self._civilian_loss_s.clear()
 
     # -- route/stop bookkeeping ------------------------------------------------
 
@@ -186,7 +195,9 @@ class TraciSimulationController:
                     f"(closed edges: {sorted(world.closed_edges)})"
                 )
             departure_edge = segment[0]
+            departure_index = len(edges)
             if edges and edges[-1] == departure_edge:
+                departure_index -= 1
                 edges.extend(segment[1:])
             else:
                 edges.extend(segment)
@@ -194,11 +205,13 @@ class TraciSimulationController:
                 stop_plan.append({
                     "edge_id": departure_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
                     "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
+                    "route_index": departure_index,
                 })
             pending = []
             stop_plan.append({
                 "edge_id": edges[-1], "stop_id": stop.stop_id, "task_id": stop.task_id,
                 "stop_kind": stop.kind.value, "duration": self._stop_duration(world, stop),
+                "route_index": len(edges) - 1,
             })
             current_node = stop.node_id
 
@@ -208,6 +221,7 @@ class TraciSimulationController:
                 stop_plan.append({
                     "edge_id": fallback_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
                     "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
+                    "route_index": max(0, len(edges) - 1),
                 })
             if not edges:
                 edges = [fallback_edge]
@@ -235,17 +249,25 @@ class TraciSimulationController:
                 "departPos": str(traci.vehicle.getLanePosition(vehicle.id)),
                 "departSpeed": str(traci.vehicle.getSpeed(vehicle.id)),
             }
-            traci.vehicle.remove(vehicle.id)
-
         edges, stop_plan = self._build_route(world, vehicle, stops, start_node=vehicle.node_id, start_edge=start_edge)
         route_id = f"route_{vehicle.id}_{uuid.uuid4().hex[:8]}"
         traci.route.add(route_id, edges)
+        if live:
+            traci.vehicle.remove(vehicle.id)
         traci.vehicle.add(
             vehicle.id, route_id, typeID=self._vtype_for_stops(world, stops),
-            depart=str(traci.simulation.getTime()), **depart_kwargs
+            depart=str(traci.simulation.getTime()), departLane="best", **depart_kwargs
         )
+        net = self._ensure_travel().net
         for entry in stop_plan:
-            traci.vehicle.setStop(vehicle.id, entry["edge_id"], duration=entry["duration"], flags=0)
+            edge = net.getEdge(entry["edge_id"])
+            index = entry["route_index"] + 1
+            connections = edge.getOutgoing().get(net.getEdge(edges[index]), []) if index < len(edges) else []
+            lane = connections[0].getFromLane() if connections else edge.getLane(0)
+            traci.vehicle.setStop(
+                vehicle.id, entry["edge_id"], pos=min(1.0, lane.getLength() * 0.9),
+                laneIndex=lane.getIndex(), duration=entry["duration"], flags=0,
+            )
 
         self._stop_queue[vehicle.id] = [
             {"stop_id": e["stop_id"], "task_id": e["task_id"], "stop_kind": e["stop_kind"]} for e in stop_plan
@@ -291,7 +313,7 @@ class TraciSimulationController:
 
     # -- scenario setup / plan application --------------------------------------
 
-    def load_scenario(self, world: WorldState) -> None:
+    def load_scenario(self, world: WorldState, *, keep_connected: bool = False) -> None:
         """Fresh start (ignores any saved state): spawns every ambulance
         that already has stops with its full itinerary from `vehicle.node_id`.
         Helicopters are never injected into SUMO (analytical model only)."""
@@ -307,14 +329,17 @@ class TraciSimulationController:
         # theoretical -- see docs/DECISIONS.md). One real step after
         # spawning, before the first save, fixes this.
         self.step(world, n=1)
-        self.save_and_close()
+        if not keep_connected:
+            self.save_and_close()
 
     def apply_committed_plan(self, world: WorldState, vehicle_ids: list[str]) -> None:
         """Called after `ApprovalService.approve` commits new assignments:
         re-establishes SUMO routing for exactly the vehicles the approved
         proposal touched. A broken vehicle is skipped (it is frozen, not
         rerouted) -- see `freeze_vehicle_and_locate`."""
-        self.connect(resume=True, world=world)
+        standalone = not self._connected
+        if standalone:
+            self.connect(resume=True, world=world)
         any_established = False
         for vehicle_id in vehicle_ids:
             vehicle = world.vehicles[vehicle_id]
@@ -325,11 +350,54 @@ class TraciSimulationController:
             if remaining:
                 self._establish_route(world, vehicle, remaining)
                 any_established = True
-        if any_established:
+            else:
+                self._remove_vehicle(vehicle_id)
+        if any_established and standalone:
             # See `load_scenario` -- a (re)spawned vehicle needs one real
             # step before saveState reliably captures it.
             self.step(world, n=1)
-        self.save_and_close()
+        if standalone:
+            self.save_and_close()
+
+    def _remove_vehicle(self, vehicle_id: str) -> None:
+        import traci
+
+        if vehicle_id in traci.vehicle.getIDList():
+            traci.vehicle.remove(vehicle_id)
+        self._stop_queue.pop(vehicle_id, None)
+        self._next_stop_ptr.pop(vehicle_id, None)
+        self._was_stopped.pop(vehicle_id, None)
+
+    def preview_routes(self, world: WorldState, overrides: dict) -> dict[str, list[str]]:
+        """Use the same route stitching as execution, without changing SUMO."""
+        self._ensure_travel().set_closed_edges(world.closed_edges)
+        routes = {}
+        for vehicle_id, stops in overrides.items():
+            vehicle = world.vehicles[vehicle_id]
+            if vehicle.mode != VehicleMode.ambulance or vehicle.status == VehicleStatus.broken:
+                continue
+            remaining = [stop for stop in stops if stop.service_completed_at_s is None]
+            if not remaining:
+                routes[vehicle_id] = []
+                continue
+            start_edge = vehicle.sumo_edge_id
+            if start_edge and start_edge.startswith(":"):
+                raise ValueError(f"{vehicle_id} is in a junction. Advance one step and retry.")
+            routes[vehicle_id], _ = self._build_route(world, vehicle, remaining, vehicle.node_id, start_edge)
+        return routes
+
+    def checkpoint(self) -> None:
+        import traci
+
+        Path(self.state_path).parent.mkdir(parents=True, exist_ok=True)
+        traci.simulation.saveState(self.state_path)
+
+    def restore_checkpoint(self, world: WorldState) -> None:
+        self.close()
+        self._stop_queue.clear()
+        self._next_stop_ptr.clear()
+        self._was_stopped.clear()
+        self.connect(resume=True, world=world)
 
     def freeze_vehicle_and_locate(self, world: WorldState, vehicle_id: str) -> str:
         """Call *before* applying a `vehicle_breakdown` event (while `status`
@@ -341,7 +409,9 @@ class TraciSimulationController:
         itself set `status = broken`; the caller still runs the normal
         `events.apply.apply_event` for that, unchanged.
         Connects and closes its own session; caller does not need to."""
-        self.connect(resume=True, world=world)
+        standalone = not self._connected
+        if standalone:
+            self.connect(resume=True, world=world)
         import traci  # noqa: PLC0415
 
         vehicle = world.vehicles[vehicle_id]
@@ -358,7 +428,8 @@ class TraciSimulationController:
                 "sim_time_s": world.sim_time_s, "kind": "vehicle_frozen", "vehicle_id": vehicle_id,
                 "edge_id": edge, "position": pos, "node_id": node_id,
             })
-        self.save_and_close()
+        if standalone:
+            self.save_and_close()
         return node_id
 
     def apply_road_closure_physically(self, world: WorldState, edge_id: str) -> None:
@@ -367,15 +438,24 @@ class TraciSimulationController:
         edge are not ejected or teleported; this only blocks new routing
         onto it, matching the "ahead of vehicles" closure semantics
         documented in docs/DECISIONS.md."""
-        self.connect(resume=True, world=world)
+        standalone = not self._connected
+        if standalone:
+            self.connect(resume=True, world=world)
+        self._set_road_permissions({edge_id: None})
+        self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "edge_closed_physically", "edge_id": edge_id})
+        if standalone:
+            self.save_and_close()
+
+    def _set_road_permissions(self, edges, *, reopen: bool = False) -> None:
         import traci  # noqa: PLC0415
 
         net = self._ensure_travel().net
-        edge = net.getEdge(edge_id)
-        for lane in edge.getLanes():
-            traci.lane.setDisallowed(lane.getID(), ["all"])
-        self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "edge_closed_physically", "edge_id": edge_id})
-        self.save_and_close()
+        for edge_id in edges:
+            for lane in net.getEdge(edge_id).getLanes():
+                if reopen:
+                    traci.lane.setAllowed(lane.getID(), sorted(lane.getPermissions()))
+                else:
+                    traci.lane.setDisallowed(lane.getID(), ["all"])
 
     def _edge_to_node(self, edge_id: str) -> str:
         if edge_id.startswith(":"):
@@ -398,6 +478,8 @@ class TraciSimulationController:
             self._update_positions(world, traci)
             self._run_green_wave(world, traci)
             for restored in tick_scheduled_restorations(world):
+                if restored.kind == "edge_reopen":
+                    self._set_road_permissions([restored.target_id], reopen=True)
                 self.event_log.append({
                     "sim_time_s": world.sim_time_s, "kind": "scheduled_restoration_applied",
                     "restoration_kind": restored.kind, "target_id": restored.target_id,
@@ -471,7 +553,10 @@ class TraciSimulationController:
                 continue
             pos = traci.vehicle.getLanePosition(vehicle_id)
             try:
-                traci.vehicle.setStop(vehicle_id, edge, pos=pos, duration=1e6, flags=0)
+                traci.vehicle.setStop(
+                    vehicle_id, edge, pos=pos, laneIndex=traci.vehicle.getLaneIndex(vehicle_id),
+                    duration=1_000_000.0, flags=1,
+                )
             except Exception:  # noqa: BLE001 -- best-effort; setSpeed(0) above still applies
                 pass
 
@@ -538,6 +623,15 @@ class TraciSimulationController:
             from rescueflow.models.core import AssetLocation, TaskStatus  # noqa: PLC0415
 
             task.status = TaskStatus.en_route_dropoff
+            vehicle.status = VehicleStatus.carrying
+            if stop_obj is not None:
+                vehicle.node_id = stop_obj.node_id
+            # Carrying a patient or equipment is a fixed commitment through
+            # its drop-off. Keep that prefix even as new tasks are inserted.
+            for index, stop in enumerate(vehicle.route_stops):
+                if stop.task_id == task_id and stop.kind == StopKind.dropoff:
+                    vehicle.locked_stop_index = max(vehicle.locked_stop_index or 0, index)
+                    break
             for asset_id in task.required_asset_ids:
                 asset = world.assets.get(asset_id)
                 if asset is not None:
@@ -549,6 +643,10 @@ class TraciSimulationController:
             from rescueflow.models.core import AssetLocation, TaskStatus  # noqa: PLC0415
 
             task.status = TaskStatus.completed
+            vehicle.status = (
+                VehicleStatus.assigned if any(s.service_completed_at_s is None for s in vehicle.route_stops)
+                else VehicleStatus.available
+            )
             for asset_id in task.required_asset_ids:
                 asset = world.assets.get(asset_id)
                 if asset is not None:
@@ -565,6 +663,42 @@ class TraciSimulationController:
             if vehicle_id in live:
                 vehicle.sumo_edge_id = traci.vehicle.getRoadID(vehicle_id)
                 vehicle.sumo_lane_position = traci.vehicle.getLanePosition(vehicle_id)
+            else:
+                vehicle.sumo_edge_id = None
+                vehicle.sumo_lane_position = None
+
+    def live_telemetry(self, world: WorldState) -> dict:
+        """Dashboard telemetry read from the current TraCI frame."""
+        import traci
+
+        vehicle_ids = traci.vehicle.getIDList()
+        fleet = {}
+        civilian_count = 0
+        for vehicle_id in vehicle_ids:
+            if vehicle_id in world.vehicles:
+                route_index = traci.vehicle.getRouteIndex(vehicle_id)
+                fleet[vehicle_id] = {
+                    "xy": traci.vehicle.getPosition(vehicle_id),
+                    "edge": traci.vehicle.getRoadID(vehicle_id),
+                    "speed_mps": traci.vehicle.getSpeed(vehicle_id),
+                    "route": traci.vehicle.getRoute(vehicle_id)[max(0, route_index):],
+                }
+            elif traci.vehicle.getTypeID(vehicle_id) == "civilian":
+                civilian_count += 1
+                self._civilian_loss_s[vehicle_id] = traci.vehicle.getTimeLoss(vehicle_id)
+        return {
+            "fleet": fleet,
+            "signals": {
+                tls_id: {
+                    "phase": traci.trafficlight.getPhase(tls_id),
+                    "state": traci.trafficlight.getRedYellowGreenState(tls_id),
+                }
+                for tls_id in traci.trafficlight.getIDList()
+            },
+            "civilian_active": civilian_count,
+            "civilian_observed": len(self._civilian_loss_s),
+            "civilian_time_loss_s": round(sum(self._civilian_loss_s.values()), 1),
+        }
 
     def _run_green_wave(self, world: WorldState, traci) -> None:
         self._ensure_travel().set_closed_edges(world.closed_edges)

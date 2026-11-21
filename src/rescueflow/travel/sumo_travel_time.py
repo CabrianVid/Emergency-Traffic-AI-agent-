@@ -65,16 +65,14 @@ class SumoTravelTimeProvider:
         edges = list(node.getOutgoing()) or list(node.getIncoming())
         if not edges:
             raise ValueError(f"node {node_id!r} has no connecting edges")
-        open_edges = [e for e in edges if e.getID() not in self._closed]
-        return open_edges or edges
+        return [e for e in edges if e.getID() not in self._closed]
 
     def _candidate_in_edges(self, node_id: str) -> list:
         node = self.net.getNode(node_id)
         edges = list(node.getIncoming()) or list(node.getOutgoing())
         if not edges:
             raise ValueError(f"node {node_id!r} has no connecting edges")
-        open_edges = [e for e in edges if e.getID() not in self._closed]
-        return open_edges or edges
+        return [e for e in edges if e.getID() not in self._closed]
 
     def _dijkstra(self, from_edge, to_edge_id: str) -> list | None:
         """Shortest (by travel time) edge path from `from_edge` to any edge
@@ -128,7 +126,10 @@ class SumoTravelTimeProvider:
         """One real edge touching `node_id` (prefers an open outgoing edge).
         Used by the controller to attach a `setStop` when a vehicle's first
         stop is at the node it is already parked at."""
-        return self._candidate_out_edges(node_id)[0].getID()
+        edges = self._candidate_out_edges(node_id)
+        if not edges:
+            raise ValueError(f"node {node_id!r} has no open departure edge")
+        return edges[0].getID()
 
     def path_edges_from_edge(self, from_edge_id: str, dest_node: str) -> list[str] | None:
         """Like `road_path_edges`, but the path must continue from the
