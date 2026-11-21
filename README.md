@@ -48,6 +48,25 @@ The console explicitly labels its rule-based interpretation when an
 OpenAI key is absent. See the [runbook](docs/RUNBOOK.md) for optional
 OpenAI setup and the API reference.
 
+## Watch the Ljubljana simulation in SUMO 2D
+
+From the repository root, run either command in PowerShell. The SUMO
+window starts automatically. Watch for the red-and-white ambulance at
+30 simulated seconds, and use the mouse wheel to zoom.
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+```
+
+**B0** uses normal signals. **A2** enables the green-wave controller for
+the same urgent trip, with identical routes, civilian demand and
+blue-light privileges. The map labels the active policy and shows how
+many phases were shortened. This standalone scene shows signal priority
+on real Ljubljana streets with synthetic traffic. Use the dispatcher
+workstation for assignment and plan repair. See the [runbook](docs/RUNBOOK.md)
+for presentation controls and saving the observed trip data.
+
 ## Run the evaluation
 
 ```powershell

@@ -191,3 +191,24 @@ vehicle only after its observed service duration and while receiving
 capacity remains in the current window. During the hold, the vehicle and
 its assets retain custody. The actual service start is stored in the
 world so builds using the new stop format can resume mid-hold.
+
+## Native Ljubljana presentation
+
+The [2D presentation](RUNBOOK.md#native-sumo-2d-presentation) builds the
+dashboard's road extract into a separate generated directory and uses
+the existing TraCI owner with the SUMO GUI binary. One fixed urgent route
+and four synthetic civilian flows traverse the Njegoševa and Zaloška
+corridor. The blue-light device and vehicle physics are shared by B0 and
+A2. Only A2 enables green-wave requests for the ambulance. The displayed
+intervention count comes from the controller's phase-shortening events.
+
+The [scene layer](../simulation/presentation/ljubljana.scene.add.xml)
+contains [OpenStreetMap](https://www.openstreetmap.org/copyright) building
+footprints, parks and other land-use polygons under ODbL 1.0. The source
+was the [OSM map extract](https://api.openstreetmap.org/api/0.6/map?bbox=14.5075,46.0518,14.5215,46.0595)
+for the same area. SUMO 1.28.0 `polyconvert` used the Ljubljana SUMO
+network, [scene typemap](../simulation/presentation/ljubljana.typ.xml),
+`--discard --osm.merge-relations 1 --proj.plain-geo` and
+`--prune.boundary 632,-15,1285,500`. The included layer retains polygons
+with their geographic coordinates. The decoration and top-down vehicle
+images are display assets. Routes and signals use SUMO's road network.

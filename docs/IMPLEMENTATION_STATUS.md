@@ -18,9 +18,35 @@ controls, grid/Ljubljana switching, map zoom, and the published
 Results panel. The UI reset now keeps one live map and dispatcher.
 
 The benchmark and offline replay work without model credentials.
-Live OpenAI parsing was untested because no key was configured.
 Setup, sample report paths and the four-minute walkthrough are in the
 [README](../README.md), [runbook](RUNBOOK.md) and [demo script](DEMO_SCRIPT.md).
+
+## Native SUMO 2D presentation
+
+Checkpoint `ab2142f` adds a separately launched Ljubljana scene with
+OpenStreetMap building and park outlines, top-down vehicle artwork and
+a label that follows the live SUMO ambulance. The experiment runner,
+published measurements and dispatcher presets still use their previous
+inputs.
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+.\.venv\Scripts\python.exe -m pytest tests/ -q
+```
+
+On SUMO 1.28.0 the same fixed trip took 45.00 simulated seconds in B0
+and 41.50 in A2. B0 made zero requests. A2 shortened one phase and ended
+all three requests. The paired headless runs had byte-identical route
+inputs and empty SUMO warning logs. The native A2 view was inspected
+and captured during the trip. Both desktop modes completed. All 51
+existing tests passed.
+
+This is an illustrative trip with synthetic demand, separate from the
+multi-seed evaluation. See the [runbook](RUNBOOK.md#native-sumo-2d-presentation)
+for replay and output options. A subsequent local OpenAI smoke reached
+the provider and received `billing_not_active`. The interpretation
+endpoint returned the validated rule-based draft.
 
 ## Recorded measurements
 

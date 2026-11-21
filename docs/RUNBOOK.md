@@ -29,6 +29,35 @@ provider only when a key is configured. Without a key, or on provider
 failure, the report panel reports “Rule-based fallback — AI unavailable”
 for supported reports. Scenario buttons always use local event drafts.
 
+## Native SUMO 2D presentation
+
+In PowerShell at the repository root, run one policy at a time.
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+```
+
+Playback starts automatically. The red-and-white ambulance is scheduled
+at simulated second 30. Gold, mint and blue cars are civilian traffic.
+The signal bars show the actual signal states. A2's overlay counts
+recorded phase shortenings from the controller. Use the mouse wheel to
+zoom, drag to pan, or adjust **Delay (ms)** for a slower view. At the end
+of 160 simulated seconds the window closes and the terminal prints the
+observed ambulance drive time and signal activity. Run the command again
+to replay.
+
+Use `--output` to save observations and `--headless` to omit the window.
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0 --headless --output simulation/state/presentation/B0
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2 --headless --output simulation/state/presentation/A2
+```
+
+The sampled trip and demand are fixed in both modes. This scene
+demonstrates the signal-priority feature on one corridor. The matched
+multi-seed evidence remains in [EXPERIMENTS.md](EXPERIMENTS.md).
+
 ## Dispatcher API
 
 FastAPI serves interactive schemas at [API docs](http://127.0.0.1:8000/docs).
