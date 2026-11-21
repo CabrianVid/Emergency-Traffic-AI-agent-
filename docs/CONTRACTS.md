@@ -83,6 +83,44 @@ recovery task or touch `assigned_vehicle_id` -- see
 Only an equipment-only interrupted leg gets an automatic
 `equipment_recovery` task.
 
+## Completed stops are history, never re-validated against current state
+
+`Stop.service_completed_at_s` (set only by `SimulationController` when a
+dwell actually finishes) marks a stop as physically done. `_check_asset_custody`
+and `_check_time_windows` skip any such stop -- checking it against the
+*current* world would check the wrong time slice (the asset has since
+moved; the deadline either was or wasn't met and can't be un-met). See
+docs/DECISIONS.md "Validator: a completed stop is history" for the real
+bug this fixes. `_check_capacity_and_ordering` and `_check_eligibility` do
+*not* skip completed stops: the former needs them to maintain correct
+running onboard/capacity counts, and the latter checks static facts that
+never change over time.
+
+## Road closures and scheduled auto-restoration
+
+`WorldState.closed_edges: dict[edge_id, reopen_at_sim_s | None]` is the
+single source of truth for which edges are closed; `SumoTravelTimeProvider.
+set_closed_edges` must be called with it before any planning query (the
+CLI's `_travel(world)` helper does this), so B0 and A1 both detour
+identically with no per-planner code change. `WorldState.
+scheduled_restorations` is a generic "undo this automatically at time T"
+list (edge reopening, a helicopter's fog grounding expiring); `events.
+apply.tick_scheduled_restorations(world)` applies any whose time has
+arrived and bumps `plan_revision` once if anything changed -- called every
+`SimulationController.step` and by the `sim advance` CLI command.
+
+## `SimulationController` is the only TraCI caller, and now does real work
+
+No other module imports `traci`. `TraciSimulationController` owns route
+building (`_build_route`/`_establish_route`), dwell-completion detection
+and custody transfer (`_process_arrivals_and_stops`/`_complete_stop`),
+broken-vehicle freezing (`freeze_vehicle_and_locate`/`_enforce_frozen`),
+physical road closures (`apply_road_closure_physically`), and green-wave
+signal priority (delegated to `rescueflow.sumo.green_wave.
+GreenWaveController`, called from `_run_green_wave`). See
+docs/INTEGRATIONS.md for the save-state-based process model this all runs
+under and the specific bugs its design had to work around.
+
 ## Event validation never overwrites a conflicting observation
 
 `EventInterpreter.validate_event` checks a reported fact (e.g. "K1 is

@@ -20,7 +20,21 @@ was actually run and its output observed, not inferred.
 | G | Typed `vehicle_breakdown`/`new_urgent_task` (+ typed-only models for the rest) | `events/types.py`, `events/interpreter.py`, `events/apply.py`; `EventType` enum has all 8 types, only 2 executed | `tests/test_events.py`; `apply_event` raises `NotImplementedError` naming the type for the other 6 |
 | H | Documented CLI commands; same-network ETA provider | `cli/main.py`; `travel/sumo_travel_time.py` reads the same `.net.xml` the smoke test loads | docs/RUNBOOK.md; every command below was actually run (docs/IMPLEMENTATION_STATUS.md) |
 
-## Exit gate (from the prompt)
+## Prompt 2 requirements
+
+| # | Requirement | Implementation | Verified by |
+|---|---|---|---|
+| 1 | Single-owner `SimulationController`, headless, pause/resume/reset, seed, snapshots | `sumo/controller.py` (save-state based resume, `step`/`reset`), `sim advance` prints `SimulationSnapshot` | Live multi-invocation run (docs/SCENARIOS.md Demo A); no silent fallback -- `connect()` raises if SUMO is missing |
+| 2 | Physical service execution: dwell, custody only on completion, broken vehicle never sent onward | `_process_arrivals_and_stops`/`_complete_stop`/`_enforce_frozen` | `tests/test_sumo_execution.py` (3 tests); live Demo A run (K1 custody trace) |
+| 3 | Road disruptions: planned closure, same for B0/A1, no teleport | `events/apply._apply_road_closure`, `travel/sumo_travel_time.py` closure-aware Dijkstra, `sumo/controller.apply_road_closure_physically` | `tests/test_sumo_execution.py::test_live_road_closure_blocks_routing`, `tests/test_events_prompt2.py` |
+| 4 | `vehicle_delay`/`priority_changed`/`hospital_capacity_changed`/`helicopter_grounded`, analytical helicopter ETA (unchanged, never in SUMO), infeasibility report preserved | `events/apply.py` (4 new handlers + `tick_scheduled_restorations`), `events/interpreter.py` (4 new validators) | `tests/test_events_prompt2.py` (8 tests) |
+| 5 | A1 wall-clock solve budget, >=2 strategies, solver log; B0 parity | `planning/optimized.py`/`baseline.py` (`solve_budget_s`), `planning/solver_log.py` | existing planner tests still pass; manual CLI run shows `solver_log.jsonl` populated |
+| 6 | Green wave: real phases, min-green/yellow/all-red respected, 1 then 3 junctions, timeout/restore, conflict resolution | `sumo/green_wave.py` | `tests/test_green_wave.py` (pure logic); live Demo A run (real `phase_shortened`/`priority_green_reached`/`restored` sequence across multiple junctions) |
+| 7 | Emergency-driving fairness, same model for all policies | `sumo/network_gen.py` (two vTypes), `sumo/controller._vtype_for_stops` | Live check: R3 (critical) = `emergency`, R2/R5 (non-critical) = `passenger` |
+| 8 | Dispatch adapter on committed changes only, operator gate + idempotency preserved | `approval/service.py` (unchanged) + `plan approve` now also calls `apply_committed_plan` for a live session | prompt 1 approval tests still pass unmodified |
+| 9 | Repositioning | **not implemented**, per the prompt's own permission to skip rather than half-build | docs/IMPLEMENTATION_STATUS.md |
+
+## Exit gate -- prompt 1 (from that prompt)
 
 > A clean, documented CLI run loads an initially valid schedule, processes
 > the R2+K1 disruption, obtains at least one valid A1 repair and one B0
@@ -35,3 +49,24 @@ docs/IMPLEMENTATION_STATUS.md for the full transcript):
 `sumo smoke` (real SUMO 1.28.0 process, ambulance moved and arrived) --
 run independently of the planning pipeline, confirming SUMO itself works
 regardless of the JSON-level planning demo.
+
+## Exit gate -- prompt 2 (from that prompt)
+
+> Genuine SUMO simulation demonstrates approved plan changing physical
+> vehicle routing, time-accurate equipment pickup and delivery,
+> constraints respected, and green-wave changing/restoring at least one
+> signal safely.
+
+All satisfied in one live, continuous-state session (docs/SCENARIOS.md
+Demo A is the exact script): `sim load` -> `sim advance` (R2 genuinely
+en route carrying K1) -> `sim breakdown --vehicle R2` (physically frozen
+at its real position, never moves again) -> `plan b0` + `plan approve`
+(R1's route is **physically changed** in the live SUMO session, not just
+in `WorldState`) -> `sim advance` to completion: R1 genuinely drives to
+the real breakdown position, dwells the transfer interval, and delivers
+K1 -- every hard constraint (capacity, custody, no double-pickup, no
+teleport) held throughout, enforced by the same `DefaultPlanValidator`
+prompt 1 built -- and multiple real green-wave requests along R1's and
+R3's routes were granted (`setPhaseDuration` shortenings that never
+skipped a yellow/all-red phase) and explicitly restored once each
+passage was confirmed or timed out.

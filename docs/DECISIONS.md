@@ -1,8 +1,11 @@
-# Decisions and known simplifications (prompt 1)
+# Decisions and known simplifications (prompts 1-2)
 
 Dated 2026-11-21. Each entry says what was chosen, why, and what the
 honest limitation is -- so a later prompt either accepts the tradeoff
 knowingly or replaces it deliberately (and updates this file when it does).
+Prompt 1 entries are below; prompt 2 entries (SUMO execution, green wave,
+emergency fairness) are at the bottom. See also docs/INTEGRATIONS.md for
+the deeper TraCI-level mechanics behind several of these.
 
 ## Offline-friendly environment: `--system-site-packages` venv, no pip network access
 
@@ -65,19 +68,19 @@ distance. Fixed by `model_copy()`-ing every stop at the top of each loop
 iteration. If you add any new code that reads `vehicle.route_stops` and
 hands it to something that mutates Stop fields, copy first.
 
-## Breakdown location = vehicle's last confirmed node
+## Breakdown location = vehicle's last confirmed node (prompt 1; resolved in prompt 2)
 
-`Vehicle.node_id` is not continuously updated with the vehicle's live edge
-position in this static, non-executing (prompt 1) model -- there is no
-running simulation loop yet (`SimulationController.step`/
-`apply_committed_plan` are `NotImplementedError` stubs). So
-`events.apply._apply_vehicle_breakdown` uses `vehicle.node_id` (the last
-node the vehicle was confirmed at) as the equipment-recovery pickup
-location, rather than an interpolated position along the edge it was
-travelling. This is an honest, documented approximation, not a bug: stage
-2's execution loop should update `Vehicle.node_id` as a byproduct of
-real SUMO stepping, after which this location becomes accurate without any
-change to the breakdown-handling code itself.
+Prompt 1 had no running simulation loop, so `Vehicle.node_id` was never
+updated from a live position, and `events.apply._apply_vehicle_breakdown`
+used the last *planned* node as an approximation. **Resolved in prompt 2**
+exactly as predicted here: `TraciSimulationController.
+freeze_vehicle_and_locate` now reads the vehicle's real live edge via
+TraCI, converts it to a node (`edge.getToNode()`, or the junction id
+itself for an internal edge), and writes it into `Vehicle.node_id` *before*
+`events.apply.apply_event` runs -- so the existing breakdown-handling code
+needed zero changes and now uses a real position. See
+`docs/SCENARIOS.md` Demo A for the observed result (R2 frozen and K1
+stranded at its actual live edge, not a guess).
 
 ## Road ETA is free-flow shortest path on the static network graph
 
@@ -117,6 +120,83 @@ docs/DEVELOPMENT_PLAN.md section 10 -- note that change here if it happens.
 docs/DEVELOPMENT_PLAN.md section 6.3 describes OR-Tools as "recommended,
 conditional" on top of a working stage-1 deterministic insertion/local
 search. Stage 1 (`planning/insertion.py`, `planning/optimized.py`) is
-implemented and tested; OR-Tools is not attempted in prompt 1 to keep scope
-inside the exit gate. See docs/IMPLEMENTATION_STATUS.md for what this means
-for prompt 2 planning.
+implemented and tested; OR-Tools is still not attempted (prompt 1 or 2) to
+keep scope inside each prompt's exit gate -- a possible prompt 3/4 item if
+the small-fleet heuristic ever stops being "good enough".
+
+---
+
+# Prompt 2 decisions
+
+## Process model: SUMO save-state/load-state, not a long-lived server
+
+Each `rescueflow sim ...` CLI command is a separate process; persistence
+across commands uses SUMO's own `simulation.saveState`/`--load-state`
+mechanism, not a kept-alive Python process or a reimplemented serializer.
+Full rationale and the real bugs this surfaced (a vehicle added and saved
+in the same step was silently dropped on reload; stitched multi-stop
+routes could reference a junction turn SUMO doesn't actually connect) are
+in docs/INTEGRATIONS.md -- read that before changing
+`TraciSimulationController`.
+
+## A real, order-dependent circular import between `sumo` and `travel`
+
+`rescueflow/sumo/__init__.py` used to eagerly re-export
+`TraciSimulationController`, which imports `rescueflow.travel.
+sumo_travel_time`, which imports `rescueflow.sumo.env` (part of the `sumo`
+package). Depending on which package got imported *first* in a given
+process, this either worked (by accident, via Python's tolerance for
+partial-module submodule imports) or failed with "cannot import name
+... from partially initialized module". Fixed by not re-exporting
+`TraciSimulationController` from `rescueflow/sumo/__init__.py` at all --
+import it directly: `from rescueflow.sumo.controller import
+TraciSimulationController`. If you add a new cross-package re-export to
+any `__init__.py`, check both import orders actually work, not just the
+one your editor happens to exercise first.
+
+## Validator: a completed stop is history, not a re-litigable claim
+
+`DefaultPlanValidator._check_asset_custody` and `._check_time_windows` now
+skip any `Stop` with `service_completed_at_s is not None`. Without this, a
+historical pickup stop (e.g. R2's completed K1 pickup, left in
+`route_stops` as a permanent record) was re-checked against the *current*
+(since-moved-on) asset location every time any new proposal was validated
+-- a real false-positive ("asset K1 is physically at roadside:A2, not at
+pickup node B1") that made every subsequent repair proposal for an
+unrelated vehicle look infeasible. `_check_capacity_and_ordering` and
+`_check_eligibility` are deliberately *not* given this skip: the former
+needs completed stops to maintain correct running onboard/capacity state
+for what comes after them, and the latter checks static facts (vehicle
+capabilities, task mode) that don't change over time, so it can't produce
+this class of false positive.
+
+## Background-flow horizon must outlive the demo, not just the smoke test
+
+`sumo setup`'s default `--horizon` (route-file/`sumocfg` `<end>` and
+background `<flow>` `end=`) was 150s, sized for the prompt-1 smoke test.
+Stepping a live session well past that produced `Error: The route '!bg2'
+for vehicle 'bg2.3' is not known.` (a flow trying to keep repeating after
+its own declared demand window expired, interacting badly with
+save-state's auto-generated per-repetition route names). Fixed by passing
+a generous `--horizon` (1800s, covers a full multi-event demo) when
+setting up for a live `sim` session; the 150s default remains fine for the
+standalone `sumo smoke` command, which only runs ~60-90s.
+
+## Freeze-settling tolerance in `test_broken_vehicle_never_moves_again`
+
+See docs/INTEGRATIONS.md "Freezing a broken vehicle exactly" -- real
+deceleration takes a step or two and a few meters. The test allows that
+one-time settling (`controller.step(world, n=5)`) before asserting
+true-zero drift over many further steps, rather than asserting an
+instant, physically-impossible stop.
+
+## Emergency-driving fairness: two vTypes, one shared rule
+
+See docs/INTEGRATIONS.md "Emergency-driving fairness" for the full
+mechanism. The short version: `ambulance` (real `vClass=emergency`) is
+used only for an itinerary containing a critical-priority leg;
+`ambulance_routine` (`vClass=passenger`) otherwise; both B0- and
+A1-produced assignments are typed by the exact same rule
+(`TraciSimulationController._vtype_for_stops`), so neither policy's
+measured performance can be an artifact of unequal SUMO driving
+privileges.

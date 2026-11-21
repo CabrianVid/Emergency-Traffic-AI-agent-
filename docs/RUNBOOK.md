@@ -38,10 +38,23 @@ console script).
 | `event breakdown [--state PATH] [--text "..."]` | Parses free text (default: the exact Slovenian R2/K1 report), validates against the world, applies it (mutates + saves state) | **no** -- re-running against an already-broken R2 is rejected (`already_broken`) |
 | `plan b0 [--state PATH] [--out PATH]` | Computes the B0 baseline repair proposal, prints it, saves to JSON | yes, read-only w.r.t. state |
 | `plan a1 [--state PATH] [--profiles a,b] [--out-dir DIR]` | Computes A1 proposals (one per profile), prints and saves each | yes, read-only w.r.t. state |
-| `plan approve --proposal PATH [--state PATH] [--approved-by NAME] [--idempotency-key KEY]` | Re-validates, commits assignments, logs mock dispatch messages, saves state | yes with the same `--idempotency-key` (defaults to the proposal's own id) |
+| `plan approve --proposal PATH [--state PATH] [--approved-by NAME] [--idempotency-key KEY]` | Re-validates, commits assignments, logs mock dispatch messages, saves state; **if a live `sim` session exists, also reroutes the touched vehicles in it** | yes with the same `--idempotency-key` (defaults to the proposal's own id) |
+| `event delay --vehicle ID --seconds S` | `vehicle_delay`: shifts a vehicle's unlocked stops later | no (re-running adds another delay) |
+| `event priority --task ID --new-priority P --reason "..."` | `priority_changed` | no |
+| `event hospital-capacity --site ID --slots '[{"start_s":...,"end_s":...,"capacity":...}]'` | `hospital_capacity_changed` -- replaces any overlapping existing slot | no |
+| `event helicopter-grounded [--vehicle HELI_1] [--duration S] [--cause fog]` | `helicopter_grounded`; auto-restores via a scheduled restoration once the duration elapses (ticked by `sim advance`) | no |
+| `sim load [--state PATH]` | Fresh start: spawns every ambulance with stops into a brand-new live SUMO session, saves its state | **no** -- use `sim reset` first to start over |
+| `sim reset [--state PATH]` | Deletes the live session's saved state + event log; resets world state to the checked-in fixture | yes |
+| `sim advance [--steps N]` | Steps the live simulation `N` simulated seconds; detects dwell completions, transfers custody, runs green-wave, ticks scheduled restorations | yes (always continues from wherever it left off) |
+| `sim snapshot [--state PATH]` | Read-only: prints real vehicle positions/task status from the last `load`/`advance` (no SUMO connection) | yes |
+| `sim breakdown [--vehicle R2] [--text "..."]` | Live `vehicle_breakdown`: physically freezes the vehicle at its **real** live position first, then applies the normal validated event using that position | **no** |
+| `sim closure --edge ID [--duration S]` | Live `road_closure`: disallows the edge's lanes in the running session (vehicles already on it keep going) + records it in `WorldState` | **no** -- fails with `already_closed` on a repeat |
+| `sim toggle-green-wave --on\|--off` | Enables/disables the green-wave controller for subsequent `sim advance` calls | yes |
+| `sim export-run [--out PATH]` | Bundles the current world state + sim event log + solver log into one JSON file | yes |
 
 ## The full demo, start to finish
 
+**Pure planning (no live simulation, prompt 1 style):**
 ```powershell
 $cli = ".\.venv\Scripts\python.exe -m rescueflow.cli.main"
 
@@ -56,15 +69,29 @@ $cli = ".\.venv\Scripts\python.exe -m rescueflow.cli.main"
 & $cli scenario show
 ```
 
+**Live SUMO execution (prompt 2 -- see docs/SCENARIOS.md Demo A for the full narrative):**
+```powershell
+& $cli sumo setup --horizon 1800
+& $cli scenario export
+& $cli sim load
+& $cli sim advance --steps 150
+& $cli sim breakdown --vehicle R2
+& $cli plan b0
+& $cli plan approve --proposal simulation/state/proposal_b0.json
+& $cli sim advance --steps 1700
+& $cli sim snapshot
+```
+
 ## Tests
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
-`tests/test_sumo_smoke.py` is skipped (with a stated reason) if SUMO isn't
-found or `simulation/network/city.sumocfg` hasn't been generated yet --
-run `sumo setup` first if you want it to actually execute.
+`tests/test_sumo_smoke.py`, `tests/test_sumo_execution.py` are skipped
+(with a stated reason) if SUMO isn't found or
+`simulation/network/city.sumocfg` hasn't been generated yet -- run
+`sumo setup` first if you want them to actually execute.
 
 ## Troubleshooting
 
@@ -88,3 +115,21 @@ run `sumo setup` first if you want it to actually execute.
   `plan_revision` (e.g. you ran `event breakdown` again, or approved a
   different proposal first, after computing this one). Recompute with
   `plan b0`/`plan a1` against the current state.
+- **`Error: The route '!bgN' for vehicle 'bgN.M' is not known.` during
+  `sim advance`**: the background flows' `--horizon` expired mid-run. Run
+  `sumo setup --horizon 1800` (or longer) before `sim load` for any
+  session you'll step past ~150s -- see docs/DECISIONS.md.
+- **`TraCIException: Vehicle 'X' has no valid route. No connection
+  between edge 'A' and edge 'B'.`**: a real bug class, not user error, if
+  you see it after modifying `TraciSimulationController._build_route` --
+  see docs/INTEGRATIONS.md "Route building: stitching multi-stop
+  itineraries" before changing that code again.
+- **A `sim` command prints `()` for `getIDList()` right after `sim load`
+  and nothing is spawned**: a vehicle added via TraCI and saved in the
+  same step is dropped on reload -- `load_scenario`/`apply_committed_plan`
+  must call `self.step(world, n=1)` once after establishing routes and
+  before `save_and_close()`. See docs/INTEGRATIONS.md.
+- **`sim closure`/`sim breakdown` raises `ModuleNotFoundError: No module
+  named 'traci'`**: a stray `import traci` runs before `self.connect(...)`
+  has added the SUMO tools directory to `sys.path`. Every such helper must
+  call `self.connect(...)` first, then `import traci`.
