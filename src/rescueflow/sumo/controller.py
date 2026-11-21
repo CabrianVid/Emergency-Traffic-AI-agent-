@@ -43,6 +43,7 @@ from rescueflow.sumo.green_wave import GreenWaveController
 from rescueflow.travel.sumo_travel_time import SumoTravelTimeProvider
 
 DEFAULT_STATE_PATH = "simulation/state/sumo.state.xml.gz"
+HOSPITAL_HOLD_S = 2_000_000.0
 
 
 class TraciSimulationController:
@@ -134,6 +135,14 @@ class TraciSimulationController:
                 break
         return task.unload_seconds + handling
 
+    def _stop_duration(self, world: WorldState, stop) -> float:
+        if stop.kind == StopKind.dropoff and any(
+            site.node_id == stop.node_id for site in world.receiving_sites.values()
+        ):
+            # Release explicitly after the real dwell and a receiving-slot check.
+            return HOSPITAL_HOLD_S
+        return self._dwell_seconds(world, stop)
+
     def _build_route(self, world: WorldState, vehicle, stops, start_node: str | None, start_edge: str | None):
         """Builds one real edge-path through every stop in order.
 
@@ -184,12 +193,12 @@ class TraciSimulationController:
             for pend in pending:
                 stop_plan.append({
                     "edge_id": departure_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
-                    "stop_kind": pend.kind.value, "duration": self._dwell_seconds(world, pend),
+                    "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
                 })
             pending = []
             stop_plan.append({
                 "edge_id": edges[-1], "stop_id": stop.stop_id, "task_id": stop.task_id,
-                "stop_kind": stop.kind.value, "duration": self._dwell_seconds(world, stop),
+                "stop_kind": stop.kind.value, "duration": self._stop_duration(world, stop),
             })
             current_node = stop.node_id
 
@@ -198,7 +207,7 @@ class TraciSimulationController:
             for pend in pending:
                 stop_plan.append({
                     "edge_id": fallback_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
-                    "stop_kind": pend.kind.value, "duration": self._dwell_seconds(world, pend),
+                    "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
                 })
             if not edges:
                 edges = [fallback_edge]
@@ -381,6 +390,7 @@ class TraciSimulationController:
         self._enforce_frozen(world, traci)
 
         for _ in range(n):
+            self._hold_hospital_dropoffs(world, traci)
             traci.simulationStep()
             world.sim_time_s = traci.simulation.getTime()
             world.bump_telemetry()
@@ -399,6 +409,44 @@ class TraciSimulationController:
             for vid in traci.vehicle.getIDList()
         }
         return SimulationSnapshot(telemetry_seq=world.telemetry_seq, sim_time_s=world.sim_time_s, vehicle_positions=positions)
+
+    def _hold_hospital_dropoffs(self, world: WorldState, traci) -> None:
+        """Leave due handovers in their physical SUMO stop until a slot is available."""
+        next_time = traci.simulation.getTime() + traci.simulation.getDeltaT()
+        sites = {site.node_id: site for site in world.receiving_sites.values()}
+        if not sites:
+            return
+        remaining = {}
+        for node, site in sites.items():
+            if not site.slots:
+                remaining[node] = float("inf")
+                continue
+            slot = next((slot for slot in site.slots if slot.start_s <= next_time < slot.end_s), None)
+            remaining[node] = 0 if slot is None else slot.capacity - sum(
+                stop.kind == StopKind.dropoff and stop.node_id == node
+                and stop.service_completed_at_s is not None
+                and slot.start_s <= stop.service_completed_at_s < slot.end_s
+                for vehicle in world.vehicles.values() for stop in vehicle.route_stops
+            )
+
+        live = set(traci.vehicle.getIDList())
+        for vehicle_id in sorted(live.intersection(self._stop_queue)):
+            vehicle = world.vehicles[vehicle_id]
+            if vehicle.status == VehicleStatus.broken or not self._was_stopped.get(vehicle_id):
+                continue
+            queue = self._stop_queue[vehicle_id]
+            index = self._next_stop_ptr[vehicle_id]
+            if index >= len(queue) or queue[index]["stop_kind"] != "dropoff":
+                continue
+            stop_id = queue[index]["stop_id"]
+            stop = next((s for s in vehicle.route_stops if s.stop_id == stop_id), None)
+            if stop is None or stop.node_id not in remaining:
+                continue
+            if stop.service_start_s is None or next_time < stop.service_start_s + self._dwell_seconds(world, stop):
+                continue
+            if remaining[stop.node_id] > 0:
+                traci.vehicle.resume(vehicle_id)
+                remaining[stop.node_id] -= 1
 
     def _enforce_frozen(self, world: WorldState, traci) -> None:
         """A broken vehicle must never move again. `setSpeed(0)` alone left
@@ -437,6 +485,8 @@ class TraciSimulationController:
         arrived = set(traci.simulation.getArrivedIDList())
         live = set(traci.vehicle.getIDList())
         for vehicle_id, queue in self._stop_queue.items():
+            if world.vehicles[vehicle_id].status == VehicleStatus.broken:
+                continue
             ptr = self._next_stop_ptr.get(vehicle_id, 0)
             if ptr >= len(queue):
                 continue
@@ -454,6 +504,9 @@ class TraciSimulationController:
             stopped_now = traci.vehicle.isStopped(vehicle_id)
             was = self._was_stopped.get(vehicle_id, False)
             if stopped_now and not was:
+                stop = next((s for s in world.vehicles[vehicle_id].route_stops if s.stop_id == queue[ptr]["stop_id"]), None)
+                if stop is not None:
+                    stop.service_start_s = world.sim_time_s
                 self.event_log.append({
                     "sim_time_s": world.sim_time_s, "kind": "stop_begin", "vehicle_id": vehicle_id, **queue[ptr],
                 })

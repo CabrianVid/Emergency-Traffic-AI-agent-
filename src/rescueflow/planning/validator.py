@@ -266,16 +266,23 @@ class DefaultPlanValidator:
 
     def _check_receiving_capacity(self, world: WorldState, merged: dict[str, list[Stop]]) -> list[FeasibilityIssue]:
         issues = []
-        dropoffs_by_node: dict[str, list[Stop]] = {}
+        dropoffs_by_node: dict[str, list[float]] = {}
         for stops in merged.values():
             for stop in stops:
-                if stop.kind.value == "dropoff" and stop.arrival_s is not None:
-                    dropoffs_by_node.setdefault(stop.node_id, []).append(stop)
+                if stop.kind.value != "dropoff":
+                    continue
+                # Completed handovers still consume an interval slot.
+                # Count them at their actual completion, even if SUMO had to wait.
+                handover_s = stop.service_completed_at_s
+                if handover_s is None:
+                    handover_s = stop.arrival_s
+                if handover_s is not None:
+                    dropoffs_by_node.setdefault(stop.node_id, []).append(handover_s)
 
         for site in world.receiving_sites.values():
             relevant = dropoffs_by_node.get(site.node_id, [])
             for slot in site.slots:
-                count = sum(1 for s in relevant if slot.start_s <= s.arrival_s < slot.end_s)
+                count = sum(1 for t in relevant if slot.start_s <= t < slot.end_s)
                 if count > slot.capacity:
                     issues.append(
                         FeasibilityIssue(

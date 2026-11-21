@@ -226,7 +226,7 @@ class OptimizedPlanner:
             proposal.score = compute_score(world, proposal, merged)
             proposal.feasibility = self.validator.validate(world, proposal)
 
-            signature = (tuple(sorted(proposal.changed_task_ids)), tuple(sorted(proposal.unserved_task_ids)))
+            signature = plan_outcome_signature(world, proposal)
             if signature in seen_signatures:
                 proposal.explanation += " (identical outcome to another profile)"
             seen_signatures.add(signature)
@@ -239,3 +239,18 @@ class OptimizedPlanner:
                 )
 
         return proposals
+
+
+def plan_outcome_signature(world: WorldState, proposal: PlanProposal) -> tuple:
+    """Compare schedules independent of generated proposal and stop IDs."""
+    routes = merged_vehicle_stops(world, proposal)
+    return (
+        tuple(
+            (vehicle_id, tuple(
+                (s.task_id, s.kind, s.node_id, s.arrival_s, s.departure_s)
+                for s in routes[vehicle_id]
+            ))
+            for vehicle_id in sorted(routes)
+        ),
+        tuple(sorted(proposal.unserved_task_ids)),
+    )

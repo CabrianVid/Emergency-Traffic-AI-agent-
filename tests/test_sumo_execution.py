@@ -175,3 +175,35 @@ def test_live_road_closure_blocks_routing(tmp_path):
     travel.set_closed_edges(world.closed_edges)
     new_path = travel.road_path_edges("A0", "A3")
     assert closed_edge not in new_path
+
+
+def test_handover_and_custody_wait_for_receiving_window_across_resume(tmp_path):
+    from rescueflow.models.core import ReceivingSite, ReceivingSlot
+
+    world = _one_task_world(tmp_path)
+    world.receiving_sites["H1"] = ReceivingSite(
+        id="H1", node_id="A3", service_handling_s=5,
+        slots=[
+            ReceivingSlot(start_s=0, end_s=500, capacity=0),
+            ReceivingSlot(start_s=500, end_s=1000, capacity=1),
+        ],
+    )
+    controller = _controller(tmp_path)
+    controller.load_scenario(world)
+    controller.connect(resume=True, world=world)
+    controller.step(world, n=480)
+    controller.save_and_close()
+
+    assert any(e["kind"] == "stop_begin" and e["stop_kind"] == "dropoff" for e in controller.event_log)
+    pickup, dropoff = world.vehicles["V1"].route_stops
+    assert pickup.service_completed_at_s is not None
+    assert dropoff.service_completed_at_s is None
+    assert world.assets["K1"].location.kind == "vehicle"
+
+    controller = _controller(tmp_path)
+    controller.connect(resume=True, world=world)
+    controller.step(world, n=60)
+    controller.save_and_close()
+
+    assert 500 <= dropoff.service_completed_at_s < 540
+    assert world.assets["K1"].location.kind == "hospital"

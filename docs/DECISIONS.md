@@ -200,3 +200,20 @@ A1-produced assignments are typed by the exact same rule
 (`TraciSimulationController._vtype_for_stops`), so neither policy's
 measured performance can be an artifact of unequal SUMO driving
 privileges.
+# Prompt 3 decisions
+
+## Receiving slots govern live handover completion
+
+All hospital drop-offs use a held SUMO stop. After the observed dwell
+has elapsed, the controller resumes only as many stopped vehicles as
+the receiving window permits. The world records the actual service
+start so the dwell survives CLI save-state and resume. Custody remains
+aboard until departure from the stop. Validation counts completed
+handovers in their actual completion windows and future reservations
+by their estimated arrival windows.
+
+## Compare A1 alternatives by their schedules
+
+Alternatives with the same assigned task IDs can differ in vehicle,
+order, location or timing. Compare complete schedules and unserved
+tasks, ignoring generated proposal and stop IDs.
