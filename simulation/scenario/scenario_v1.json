@@ -1,0 +1,454 @@
+{
+  "schema_version": "1.0.0",
+  "plan_revision": 0,
+  "telemetry_seq": 0,
+  "sim_time_s": 120.0,
+  "vehicles": {
+    "R1": {
+      "id": "R1",
+      "mode": "ambulance",
+      "status": "available",
+      "node_id": "A0",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 2,
+      "capabilities": [
+        "ALS"
+      ],
+      "equipment_aboard": [],
+      "route_stops": [],
+      "available_after_s": 0.0,
+      "locked_stop_index": null
+    },
+    "R2": {
+      "id": "R2",
+      "mode": "ambulance",
+      "status": "carrying",
+      "node_id": "B1",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 2,
+      "capabilities": [
+        "BLS"
+      ],
+      "equipment_aboard": [
+        "K1"
+      ],
+      "route_stops": [
+        {
+          "stop_id": "R2-stop-1",
+          "vehicle_id": "R2",
+          "task_id": "T3",
+          "kind": "pickup",
+          "node_id": "B1",
+          "arrival_s": 0.0,
+          "service_start_s": 0.0,
+          "departure_s": 60.0,
+          "earliest_s": null,
+          "latest_s": null,
+          "patient_load_after": 0,
+          "equipment_load_after": 1,
+          "committed": true
+        },
+        {
+          "stop_id": "R2-stop-2",
+          "vehicle_id": "R2",
+          "task_id": "T3",
+          "kind": "dropoff",
+          "node_id": "A6",
+          "arrival_s": 224.08927285817134,
+          "service_start_s": 224.08927285817134,
+          "departure_s": 464.08927285817134,
+          "earliest_s": null,
+          "latest_s": 900.0,
+          "patient_load_after": 0,
+          "equipment_load_after": 0,
+          "committed": true
+        }
+      ],
+      "available_after_s": 0.0,
+      "locked_stop_index": 1
+    },
+    "R3": {
+      "id": "R3",
+      "mode": "ambulance",
+      "status": "carrying",
+      "node_id": "D3",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 2,
+      "capabilities": [
+        "BLS"
+      ],
+      "equipment_aboard": [],
+      "route_stops": [
+        {
+          "stop_id": "R3-stop-1",
+          "vehicle_id": "R3",
+          "task_id": "T2",
+          "kind": "pickup",
+          "node_id": "D2",
+          "arrival_s": 81.90064794816413,
+          "service_start_s": 81.90064794816413,
+          "departure_s": 141.90064794816413,
+          "earliest_s": null,
+          "latest_s": null,
+          "patient_load_after": 1,
+          "equipment_load_after": 0,
+          "committed": true
+        },
+        {
+          "stop_id": "R3-stop-2",
+          "vehicle_id": "R3",
+          "task_id": "T2",
+          "kind": "dropoff",
+          "node_id": "G0",
+          "arrival_s": 333.2901367890569,
+          "service_start_s": 333.2901367890569,
+          "departure_s": 543.2901367890569,
+          "earliest_s": null,
+          "latest_s": 600.0,
+          "patient_load_after": 0,
+          "equipment_load_after": 0,
+          "committed": true
+        }
+      ],
+      "available_after_s": 0.0,
+      "locked_stop_index": 1
+    },
+    "R4": {
+      "id": "R4",
+      "mode": "ambulance",
+      "status": "available",
+      "node_id": "F5",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 2,
+      "capabilities": [
+        "BLS"
+      ],
+      "equipment_aboard": [],
+      "route_stops": [],
+      "available_after_s": 0.0,
+      "locked_stop_index": null
+    },
+    "R5": {
+      "id": "R5",
+      "mode": "ambulance",
+      "status": "assigned",
+      "node_id": "G5",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 2,
+      "capabilities": [
+        "BLS"
+      ],
+      "equipment_aboard": [],
+      "route_stops": [
+        {
+          "stop_id": "R5-stop-1",
+          "vehicle_id": "R5",
+          "task_id": "T5",
+          "kind": "pickup",
+          "node_id": "G5",
+          "arrival_s": 120.0,
+          "service_start_s": 120.0,
+          "departure_s": 180.0,
+          "earliest_s": null,
+          "latest_s": null,
+          "patient_load_after": 1,
+          "equipment_load_after": 0,
+          "committed": true
+        },
+        {
+          "stop_id": "R5-stop-2",
+          "vehicle_id": "R5",
+          "task_id": "T5",
+          "kind": "dropoff",
+          "node_id": "G0",
+          "arrival_s": 371.3894888408927,
+          "service_start_s": 371.3894888408927,
+          "departure_s": 581.3894888408927,
+          "earliest_s": null,
+          "latest_s": 2500.0,
+          "patient_load_after": 0,
+          "equipment_load_after": 0,
+          "committed": true
+        }
+      ],
+      "available_after_s": 120.0,
+      "locked_stop_index": null
+    },
+    "HELI_1": {
+      "id": "HELI_1",
+      "mode": "helicopter",
+      "status": "available",
+      "node_id": "D6",
+      "patient_capacity": 1,
+      "equipment_capacity_units": 1,
+      "capabilities": [
+        "ALS"
+      ],
+      "equipment_aboard": [],
+      "route_stops": [],
+      "available_after_s": 0.0,
+      "locked_stop_index": null
+    }
+  },
+  "tasks": {
+    "T1": {
+      "id": "T1",
+      "kind": "patient_transport",
+      "priority": "high",
+      "pickup_node": "A1",
+      "dropoff_node": "A6",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 1800.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 1,
+      "equipment_units": 0,
+      "required_capabilities": [],
+      "required_asset_ids": [],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "pending",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": null,
+      "superseded_by": null
+    },
+    "T2": {
+      "id": "T2",
+      "kind": "patient_transport",
+      "priority": "critical",
+      "pickup_node": "D2",
+      "dropoff_node": "G0",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 600.0,
+      "time_window_hard": true,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 1,
+      "equipment_units": 0,
+      "required_capabilities": [],
+      "required_asset_ids": [],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "en_route_dropoff",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": "R3",
+      "superseded_by": null
+    },
+    "T3": {
+      "id": "T3",
+      "kind": "equipment_delivery",
+      "priority": "high",
+      "pickup_node": "B1",
+      "dropoff_node": "A6",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 900.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 0,
+      "equipment_units": 1,
+      "required_capabilities": [],
+      "required_asset_ids": [
+        "K1"
+      ],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "en_route_dropoff",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": "R2",
+      "superseded_by": null
+    },
+    "T4": {
+      "id": "T4",
+      "kind": "equipment_delivery",
+      "priority": "routine",
+      "pickup_node": "F5",
+      "dropoff_node": "G0",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 3000.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 0,
+      "equipment_units": 1,
+      "required_capabilities": [],
+      "required_asset_ids": [
+        "K2"
+      ],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "pending",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": null,
+      "superseded_by": null
+    },
+    "T5": {
+      "id": "T5",
+      "kind": "patient_transport",
+      "priority": "routine",
+      "pickup_node": "G5",
+      "dropoff_node": "G0",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 2500.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 1,
+      "equipment_units": 0,
+      "required_capabilities": [],
+      "required_asset_ids": [],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "planned",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": "R5",
+      "superseded_by": null
+    },
+    "T6": {
+      "id": "T6",
+      "kind": "urgent_response",
+      "priority": "critical",
+      "pickup_node": "C4",
+      "dropoff_node": "A6",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": 400.0,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 900.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 1,
+      "equipment_units": 0,
+      "required_capabilities": [
+        "ALS"
+      ],
+      "required_asset_ids": [],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "pending",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": null,
+      "superseded_by": null
+    },
+    "T7": {
+      "id": "T7",
+      "kind": "patient_transport",
+      "priority": "high",
+      "pickup_node": "E2",
+      "dropoff_node": "G0",
+      "created_at_s": 0.0,
+      "earliest_pickup_s": null,
+      "latest_pickup_s": null,
+      "earliest_delivery_s": null,
+      "latest_delivery_s": 1500.0,
+      "time_window_hard": false,
+      "load_seconds": 60.0,
+      "unload_seconds": 60.0,
+      "service_seconds": 0.0,
+      "patient_slots": 1,
+      "equipment_units": 0,
+      "required_capabilities": [],
+      "required_asset_ids": [],
+      "allowed_modes": [
+        "ambulance"
+      ],
+      "status": "pending",
+      "predecessor_task_ids": [],
+      "assigned_vehicle_id": null,
+      "superseded_by": null
+    }
+  },
+  "assets": {
+    "K1": {
+      "id": "K1",
+      "capacity_units": 1,
+      "capability_tags": [],
+      "location": {
+        "kind": "vehicle",
+        "ref_id": "R2"
+      },
+      "status": "in_transit"
+    },
+    "K2": {
+      "id": "K2",
+      "capacity_units": 1,
+      "capability_tags": [],
+      "location": {
+        "kind": "depot",
+        "ref_id": "F5"
+      },
+      "status": "available"
+    }
+  },
+  "receiving_sites": {
+    "H1": {
+      "id": "H1",
+      "node_id": "A6",
+      "accepted_task_kinds": [
+        "patient_transport",
+        "equipment_delivery",
+        "urgent_response"
+      ],
+      "slots": [
+        {
+          "start_s": 0.0,
+          "end_s": 500.0,
+          "capacity": 3
+        },
+        {
+          "start_s": 500.0,
+          "end_s": 900.0,
+          "capacity": 0
+        },
+        {
+          "start_s": 900.0,
+          "end_s": 999999.0,
+          "capacity": 3
+        }
+      ],
+      "service_handling_s": 180.0
+    },
+    "H2": {
+      "id": "H2",
+      "node_id": "G0",
+      "accepted_task_kinds": [
+        "patient_transport",
+        "equipment_delivery"
+      ],
+      "slots": [],
+      "service_handling_s": 150.0
+    }
+  },
+  "events": [],
+  "dispatch_messages": [],
+  "decisions": []
+}
