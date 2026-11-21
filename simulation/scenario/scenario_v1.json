@@ -17,7 +17,9 @@
       "equipment_aboard": [],
       "route_stops": [],
       "available_after_s": 0.0,
-      "locked_stop_index": null
+      "locked_stop_index": null,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     },
     "R2": {
       "id": "R2",
@@ -46,7 +48,8 @@
           "latest_s": null,
           "patient_load_after": 0,
           "equipment_load_after": 1,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         },
         {
           "stop_id": "R2-stop-2",
@@ -61,11 +64,14 @@
           "latest_s": 900.0,
           "patient_load_after": 0,
           "equipment_load_after": 0,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         }
       ],
       "available_after_s": 0.0,
-      "locked_stop_index": 1
+      "locked_stop_index": 1,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     },
     "R3": {
       "id": "R3",
@@ -85,14 +91,15 @@
           "task_id": "T2",
           "kind": "pickup",
           "node_id": "D2",
-          "arrival_s": 81.90064794816413,
-          "service_start_s": 81.90064794816413,
-          "departure_s": 141.90064794816413,
+          "arrival_s": 27.30021598272138,
+          "service_start_s": 27.30021598272138,
+          "departure_s": 87.30021598272138,
           "earliest_s": null,
           "latest_s": null,
           "patient_load_after": 1,
           "equipment_load_after": 0,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         },
         {
           "stop_id": "R3-stop-2",
@@ -100,18 +107,21 @@
           "task_id": "T2",
           "kind": "dropoff",
           "node_id": "G0",
-          "arrival_s": 333.2901367890569,
-          "service_start_s": 333.2901367890569,
-          "departure_s": 543.2901367890569,
+          "arrival_s": 224.08927285817134,
+          "service_start_s": 224.08927285817134,
+          "departure_s": 434.08927285817134,
           "earliest_s": null,
           "latest_s": 600.0,
           "patient_load_after": 0,
           "equipment_load_after": 0,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         }
       ],
       "available_after_s": 0.0,
-      "locked_stop_index": 1
+      "locked_stop_index": 1,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     },
     "R4": {
       "id": "R4",
@@ -126,7 +136,9 @@
       "equipment_aboard": [],
       "route_stops": [],
       "available_after_s": 0.0,
-      "locked_stop_index": null
+      "locked_stop_index": null,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     },
     "R5": {
       "id": "R5",
@@ -153,7 +165,8 @@
           "latest_s": null,
           "patient_load_after": 1,
           "equipment_load_after": 0,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         },
         {
           "stop_id": "R5-stop-2",
@@ -161,18 +174,21 @@
           "task_id": "T5",
           "kind": "dropoff",
           "node_id": "G0",
-          "arrival_s": 371.3894888408927,
-          "service_start_s": 371.3894888408927,
-          "departure_s": 581.3894888408927,
+          "arrival_s": 316.78905687544994,
+          "service_start_s": 316.78905687544994,
+          "departure_s": 526.7890568754499,
           "earliest_s": null,
           "latest_s": 2500.0,
           "patient_load_after": 0,
           "equipment_load_after": 0,
-          "committed": true
+          "committed": true,
+          "service_completed_at_s": null
         }
       ],
       "available_after_s": 120.0,
-      "locked_stop_index": null
+      "locked_stop_index": null,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     },
     "HELI_1": {
       "id": "HELI_1",
@@ -187,7 +203,9 @@
       "equipment_aboard": [],
       "route_stops": [],
       "available_after_s": 0.0,
-      "locked_stop_index": null
+      "locked_stop_index": null,
+      "sumo_edge_id": null,
+      "sumo_lane_position": null
     }
   },
   "tasks": {
@@ -450,5 +468,7 @@
   },
   "events": [],
   "dispatch_messages": [],
-  "decisions": []
+  "decisions": [],
+  "closed_edges": {},
+  "scheduled_restorations": []
 }

@@ -120,6 +120,12 @@ class Stop(_Base):
     committed: bool = False
     """True once physically executed or currently in progress -- never
     silently reassigned by a planner (see docs/CONTRACTS.md)."""
+    service_completed_at_s: float | None = None
+    """Set by `SimulationController` to the *real* sim time the dwell
+    actually finished (overwriting the planner's estimate in `departure_s`
+    at the same moment). None means not yet physically serviced -- this is
+    how the controller rebuilds its pending-stop pointer after a
+    save-state/load-state reconnect, see docs/ARCHITECTURE.md."""
 
 
 class Vehicle(_Base):
@@ -139,6 +145,13 @@ class Vehicle(_Base):
     """Index into route_stops of the stop currently being executed /
     committed in flight. Stops at or before this index must not be removed
     or reordered by a repair."""
+    sumo_edge_id: str | None = None
+    sumo_lane_position: float | None = None
+    """Real simulated position (edge id + offset along it), written only by
+    `SimulationController` while a live TraCI session is running -- distinct
+    from `node_id`, which is the nearest/last *discrete* node and is what
+    planning operates on. See docs/CONTRACTS.md "Real position vs
+    planning node"."""
 
     def patient_load(self) -> int:
         if self.locked_stop_index is None or not self.route_stops:
@@ -213,6 +226,20 @@ class ReceivingSite(_Base):
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
+
+
+class ScheduledRestoration(_Base):
+    """A generic "at sim time T, undo this automatically" entry -- used for
+    a 3600s fog grounding expiring, or a planned road closure reopening,
+    without inventing a bespoke timer mechanism per event type."""
+
+    kind: Literal["vehicle_status", "edge_reopen"]
+    at_sim_s: float
+    target_id: str
+    """vehicle_id for `vehicle_status`, edge_id for `edge_reopen`."""
+    restore_value: str | None = None
+    """New VehicleStatus value for `vehicle_status`; unused for `edge_reopen`."""
+    applied: bool = False
 
 
 class Event(_Base):
@@ -340,6 +367,10 @@ class WorldState(_Base):
     events: list[Event] = Field(default_factory=list)
     dispatch_messages: list[DispatchMessage] = Field(default_factory=list)
     decisions: list[OperatorDecision] = Field(default_factory=list)
+    closed_edges: dict[str, float | None] = Field(default_factory=dict)
+    """edge_id -> reopen_at_sim_s (None = indefinite), see events/apply.py
+    `_apply_road_closure` and travel/sumo_travel_time.py closure-awareness."""
+    scheduled_restorations: list[ScheduledRestoration] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _ids_match_keys(self) -> "WorldState":

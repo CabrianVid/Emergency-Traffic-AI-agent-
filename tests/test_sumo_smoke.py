@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 CFG_PATH = Path("simulation/network/city.sumocfg")
+NET_PATH = Path("simulation/network/city.net.xml")
 
 
 def _sumo_available() -> bool:
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.skipif(not _sumo_available(), reason="SUMO not found on
 def test_smoke_ambulance_moves_and_arrives():
     from rescueflow.sumo.controller import TraciSimulationController
 
-    controller = TraciSimulationController(str(CFG_PATH))
+    controller = TraciSimulationController(str(CFG_PATH), str(NET_PATH))
     result = controller.run_smoke(duration_s=120)
 
     assert result.sumo_version and result.sumo_version != "unknown"

@@ -84,8 +84,21 @@ def generate_routes(
 
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<routes>"]
     lines.append('  <vType id="civilian" vClass="passenger" maxSpeed="13.9" accel="2.0" decel="4.5"/>')
+    # Two ambulance vTypes, not one: `ambulance` carries SUMO's real
+    # vClass="emergency" blue-light privileges (red-light passage, rescue
+    # lane) and is used only while a vehicle is actively executing a
+    # *critical*-priority leg; `ambulance_routine` is an ordinary vClass
+    # with no special privileges, used for every non-critical leg. This is
+    # the "emergency-driving fairness" requirement in docs/DECISIONS.md --
+    # routine patient/equipment transports never get an unjustified siren,
+    # and the comparison between B0/A1 stays apples-to-apples because
+    # *both* policies' vehicles switch type by the same rule
+    # (`TraciSimulationController._vtype_for_stops`), not by which policy
+    # proposed the assignment.
     lines.append('  <vType id="ambulance" vClass="emergency" maxSpeed="20.0" accel="2.5" decel="4.5" '
                   'guiShape="emergency" color="1,0,0"/>')
+    lines.append('  <vType id="ambulance_routine" vClass="passenger" maxSpeed="13.9" accel="2.0" decel="4.5" '
+                  'guiShape="delivery" color="0,0.4,1"/>')
 
     flows_written = []
     for i, (origin, dest, period) in enumerate(_BACKGROUND_FLOWS):
