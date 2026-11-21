@@ -1,9 +1,10 @@
 # Implementation status -- prompt 1/4
 
 **Date:** 2026-11-21
-**Git commit:** see `git log -1` at handoff time (this file is updated in
-the same commit it describes; check the commit this file was last modified
-in).
+**Git commit:** `73c0a5a` ("Add CLI, doctor script, test suite, and
+checked-in scenario fixture"), on top of `e3b42cb` (core engine) and
+`9c5296d` (contracts/docs scaffold, root commit). Run `git log --oneline`
+to confirm this is still the tip before trusting the rest of this file.
 **Environment this was built/verified on:** Windows 11, Python 3.13.9
 (Miniconda base via `--system-site-packages` venv, no outbound network
 access during this session), Eclipse SUMO 1.28.0 at
