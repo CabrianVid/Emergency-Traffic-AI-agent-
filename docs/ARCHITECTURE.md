@@ -1,4 +1,28 @@
-# Architecture (prompts 1-2)
+# Architecture
+
+## Dispatcher workstation
+
+Vite serves the React application and proxies `/api` and `/ws` to
+FastAPI. Each server process owns one `DispatchRun` on a single worker
+thread. Its `TraciSimulationController` holds the only live connection.
+Play, step, reset, event application and approval are serialized on that
+worker. Reads and WebSocket subscribers receive a published snapshot;
+they share no live TraCI connection. Run IDs distinguish resets and
+sequence numbers order snapshots independently of plan revisions.
+
+Crew report extraction uses the optional OpenAI structured-response
+adapter or the deterministic parser. Its bounded network request runs
+outside the SUMO worker. The deterministic workflow resolves IDs and
+custody against the world, computes impact, and prepares distinct
+feasible proposals. Only the operator approval endpoint can commit one.
+
+Approval validates a copy of the current world. The controller
+checkpoints SUMO, installs the selected routes, and advances one step to
+observe them. On failure, it restores the previous checkpoint and keeps
+the prior committed plan and notifications. A failed restore pauses the
+run with an error. Dashboard runs and solver logs live under
+`simulation/state/dashboard/<run_id>/`. The CLI retains its original
+save-state-per-command workflow described below.
 
 This describes the code in `src/rescueflow/` as it exists today, not the
 aspirational full system in `docs/DEVELOPMENT_PLAN.md` section 4. Where

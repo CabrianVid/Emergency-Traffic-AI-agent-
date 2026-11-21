@@ -7,21 +7,46 @@ recognizes a disruption (vehicle breakdown, new urgent task, ...), proposes
 a validated repair, and lets the operator approve it before anything is
 committed.
 
-This is a synthetic demonstration on a **fictional 7x7 SUMO road grid**. It
-is not a real dispatch system, not connected to any real emergency service,
-and uses no real patient data, no Google Maps API key, and no live traffic
-feed.
+The dispatcher workstation runs synthetic incidents on a real SUMO
+network imported from OpenStreetMap around Ljubljana's Tabor and UKC
+area. The fictional 7×7 training grid remains available. Traffic demand,
+receiving sites and crew messages are simulated.
 
-**Status:** prompt 2 of 4 -- a genuine, physically-executing SUMO
-simulation: vehicles move, dwell, transfer equipment custody, a broken
-vehicle freezes at its real position and gets its cargo recovered by
-another unit, roads can close, and green-wave signal priority safely
-requests/grants/restores real traffic-light phases. See
+**Status:** prompt 3 of 4. The local console shows live SUMO telemetry,
+validates crew reports, compares constrained schedules, and applies
+operator-approved routes. See
 [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for exactly
 what is implemented vs. planned, and
 [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) for the full
 source-of-truth design document. **Start here:**
 [AGENTS.md](AGENTS.md).
+
+## Start the dispatcher workstation
+
+Install Python 3.11+, Node.js and Eclipse SUMO with its tools. From the
+repository root, run the backend in one PowerShell window:
+
+```powershell
+py -3.13 -m venv --system-site-packages .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[dashboard,dev]'
+.\.venv\Scripts\rescueflow.exe doctor
+.\.venv\Scripts\python.exe -m uvicorn rescueflow.dashboard.app:app --host 127.0.0.1 --port 8000
+```
+
+In a second window:
+
+```powershell
+cd frontend
+npm ci
+npm run dev -- --port 5173
+```
+
+Open [the dispatcher console](http://127.0.0.1:5173/) and follow the
+[demo script](docs/DEMO_SCRIPT.md). The bundled Ljubljana road extract
+and the training grid both work offline after dependency installation.
+The console explicitly labels its rule-based interpretation when an
+OpenAI key is absent. See the [runbook](docs/RUNBOOK.md) for optional
+OpenAI setup and the API reference.
 
 ## Quick start (Windows, PowerShell)
 
@@ -69,9 +94,9 @@ Full command reference, expected output, and the full Demo A/B/C scripts:
 .\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
-45 tests passed in the pre-prompt-3 review, including real SUMO execution
+The suite includes real SUMO execution and dispatcher API integration
 tests. See [implementation status](docs/IMPLEMENTATION_STATUS.md) for
-verification details.
+the latest verified results.
 
 ## Repository layout
 
@@ -87,6 +112,8 @@ src/rescueflow/        importable package (the actual system)
   approval/              the one place a proposal is allowed to commit
   sumo/                  network/route generation + TraCI controller
   cli/                   `rescueflow` command-line entry point
+  dashboard/             FastAPI, live SUMO command owner, interpretation
+frontend/               React + TypeScript dispatcher workstation
 simulation/
   network/                generated SUMO network/routes (gitignored, regenerate with `sumo setup`)
   scenario/               the exported, checked-in initial-plan fixture (stable JSON)

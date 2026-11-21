@@ -1,5 +1,28 @@
 # Contracts
 
+## Dispatcher API invariants
+
+- The server owns every proposal, event and snapshot. The browser
+  submits commands by ID. Report interpretation has no side effects;
+  applying a report re-validates its ID and custody against the current
+  run. Scenario triggers follow the same validator and executor.
+- Approval requires the current plan revision, the stored proposal's
+  revision and TTL, and both fresh feasibility and a current SUMO route.
+  Retrying the same key and proposal within the run returns the first
+  successful result. Reusing that key for a different proposal rejects.
+  Notifications appear after routing succeeds.
+- Ordinary movement only advances telemetry. Observed pickup, handover,
+  disruptions and approval may advance the planning revision.
+- Identical schedule detection compares vehicle, task, stop order, node
+  and ETA across the whole resulting schedule, plus unserved tasks.
+  The UI offers one card for equivalent results.
+- A hospital handover consumes a slot in the window in which it
+  completes. The physical vehicle holds its load until its dwell and
+  available capacity permit departure. Future reservations use
+  estimated arrivals. Completed handovers contribute actual slot usage.
+
+The historical CLI behavior and domain contracts follow.
+
 The canonical types live in `src/rescueflow/models/core.py`
 (`schema_version = "1.0.0"`); the module docstrings there are the first
 source of truth. This file explains the *invariants* -- what must stay true
@@ -8,8 +31,9 @@ across any future change -- and points at the test that enforces each one.
 ## `plan_revision` vs `telemetry_seq`
 
 `WorldState.plan_revision` increments only on a planning-affecting change:
-applying a validated event (`events.apply.apply_event`) or committing an
-approved proposal (`approval.service.DefaultApprovalService.approve`).
+applying a validated event (`events.apply.apply_event`), committing an
+approved proposal (`approval.service.DefaultApprovalService.approve`),
+observing a completed service or applying a scheduled restoration.
 `WorldState.telemetry_seq` is a separate counter for frequent simulator
 position updates (bumped by `SimulationController.step`/`bump_telemetry`)
 and **must never** be used to decide whether a `PlanProposal` is stale.

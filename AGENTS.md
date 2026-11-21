@@ -1,14 +1,13 @@
-# AGENTS.md -- onboarding for the next coding agent (prompt 3/4 onward)
+# AGENTS.md -- onboarding for the next coding agent (prompt 4/4)
 
 You are continuing work on RescueFlow AI, an AdaHack 2026 hackathon
 demonstration. **Before writing any code:**
 
 1. Read [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) -- the
-   source-of-truth design document. For prompt 3, the most relevant
-   sections are 9 (AI agent/approval model) and 4 (the dispatcher
-   dashboard UI described there).
+   source-of-truth design document. For prompt 4, start with sections
+   10 (evaluation), 14 (verification), and 18 (build sequence).
 2. Read [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) --
-   exactly what prompts 1-2 built, what's stubbed, known limitations, and
+   exactly what prompts 1–3 built, known limitations, and
    the recommended next prompt. Do not assume anything works until this
    file (or the actual code) says so.
 3. Read [docs/CONTRACTS.md](docs/CONTRACTS.md) -- the invariants every
@@ -27,9 +26,9 @@ demonstration. **Before writing any code:**
 - **Don't call TraCI from anywhere except `rescueflow.sumo.controller`.**
   Planning and the approval gate operate on `WorldState`/`PlanProposal`
   only; `TraciSimulationController` is the single owner of the TraCI
-  connection, one process at a time (docs/INTEGRATIONS.md -- it is *not*
-  a long-lived process; persistence across CLI invocations is SUMO's own
-  save-state/load-state).
+  connection. The dashboard holds it open on one worker thread. The CLI
+  uses SUMO save-state/load-state across invocations. See
+  [INTEGRATIONS.md](docs/INTEGRATIONS.md).
 - **Never mutate committed `WorldState` while generating a candidate plan.**
   Only `rescueflow.approval.service.DefaultApprovalService.approve()` and
   `rescueflow.events.apply.apply_event()` are allowed to do that, and both
@@ -41,8 +40,7 @@ demonstration. **Before writing any code:**
   `_check_capacity_and_ordering`/`_check_eligibility` (don't skip) and say
   why in the code.
 - **Every `Planner`/`PlanValidator`/`ApprovalService` change must still
-  pass the full existing test suite unchanged** (`pytest tests/ -v`,
-  42 tests as of prompt 2, 3 of them real SUMO integration tests). If a
+  pass the full existing test suite unchanged** (`pytest tests/ -v`). If a
   documented requirement genuinely changes a test's premise, update the
   test *and* record why in `docs/DECISIONS.md` -- don't silently weaken an
   assertion to make a broken implementation pass.
@@ -57,13 +55,11 @@ demonstration. **Before writing any code:**
 - `docs/IMPLEMENTATION_STATUS.md` is the single place that must stay
   accurate after your change -- update it before you report done.
 
-## What's next (prompt 3 scope, per docs/DEVELOPMENT_PLAN.md)
+## What's next
 
-See "Recommended next prompt" at the bottom of
-`docs/IMPLEMENTATION_STATUS.md`: a FastAPI wrapper around the existing
-`rescueflow.*` functions (not the CLI -- those functions already have no
-CLI-specific logic baked in), an LLM-backed `EventInterpreter` behind the
-existing protocol (with the existing rule-based parser as the required
-fallback when no API key is configured), and the dispatcher dashboard
-frontend. The Suite L/T/F benchmark runner and OR-Tools stage 2 come after
-that, not before.
+Build the reproducible Suite L/T/F evaluation and harden the live demo.
+Use independent SUMO processes, matched seeds, demand, incident times
+and operator delays. Review [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
+before changing the workstation. Its Results panel currently reports
+observations from individual manual replays. Keep those distinct from
+the benchmark CSVs and summary statistics planned for prompt 4.

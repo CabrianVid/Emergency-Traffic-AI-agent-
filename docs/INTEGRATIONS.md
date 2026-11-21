@@ -158,3 +158,29 @@ whole established itinerary (switching exactly mid-route at a leg boundary
 would require splitting the route and re-adding there -- not implemented,
 not needed: in every demo scenario a given itinerary's priority mix is
 simple enough that this does not matter in practice).
+
+## Dashboard integration
+
+The dashboard starts SUMO from an in-process command worker and leaves
+that connection open until reset or shutdown. Its controller returns
+actual TraCI coordinates, routes, speeds and signal states. A failed
+approval can restore that run's SUMO checkpoint. Dashboard sessions
+disable SUMO's automatic jam teleportation. When a planned reroute or
+breakdown targets an internal junction edge, advance the simulation to a
+normal road edge before retrying that action.
+
+The Ljubljana road network is generated with SUMO `netconvert` from the
+bundled [OpenStreetMap](https://www.openstreetmap.org/copyright) road
+extract, acquired at bbox `14.5075,46.0518,14.5215,46.0595`. The extract
+retains highway ways, referenced nodes and usable turn restrictions.
+SUMO imports road classes, geometries and OSM signals, merging
+intersection signals where its importer infers them. The frontend reads
+geometry from that same network. Synthetic service destinations are
+anchored to SUMO junction IDs. Background demand is generated from fixed
+road flows and uses no live traffic feed.
+
+Hospital drop-offs use an explicit held stop. The controller releases a
+vehicle only after its observed service duration and while receiving
+capacity remains in the current window. During the hold, the vehicle and
+its assets retain custody. The actual service start is stored in the
+world so builds using the new stop format can resume mid-hold.

@@ -1,5 +1,60 @@
 # Runbook
 
+## Dispatcher startup
+
+Use the two PowerShell commands below from the repository root, in
+separate shells. First install the dashboard extra and run
+`npm --prefix frontend ci` as shown in the README.
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn rescueflow.dashboard.app:app --host 127.0.0.1 --port 8000
+npm --prefix frontend run dev -- --port 5173
+```
+
+Open [the console](http://127.0.0.1:5173/). Use one Uvicorn worker per
+demo. Stop both servers with Ctrl+C. Use `npm --prefix frontend run build`
+to type-check and build the frontend, or `npm --prefix frontend run preview
+-- --port 5173` to serve the built UI with the same proxy.
+
+On a fresh checkout the server uses `netconvert` to prepare Ljubljana
+from the bundled OpenStreetMap extract, and picks the training grid if
+that import or scenario fails. Choose either network in the UI. Set
+`RESCUEFLOW_NETWORK=grid` in `.env` to start on the grid.
+
+An optional provider uses `python -m pip install -e '.[dashboard,dev,llm]'`.
+Copy `.env.example` to `.env`, add `OPENAI_API_KEY` and optionally set
+`OPENAI_MODEL` to a structured-output model, then restart the backend.
+The adapter sends the synthetic report and allowed identifiers to the
+provider only when a key is configured. Without a key, or on provider
+failure, the report panel reports “Rule-based fallback — AI unavailable”
+for supported reports. Scenario buttons always use local event drafts.
+
+## Dispatcher API
+
+FastAPI serves interactive schemas at [API docs](http://127.0.0.1:8000/docs).
+
+| Method and path | Body or output |
+| --- | --- |
+| GET `/api/state` | One authoritative dashboard snapshot |
+| GET `/api/network` | SUMO junction coordinates, road shapes, and signal locations |
+| POST `/api/simulation/load` | `{"network":"ljubljana","scenario":"breakdown"}` |
+| POST `/api/simulation/reset`, `/play`, `/pause` | Empty request |
+| POST `/api/simulation/step` | `{"steps":30}` |
+| POST `/api/simulation/speed` | `{"speed":30}` |
+| POST `/api/events/interpret` | `{"message":"Vozilo R2 je obstalo. Komplet K1 je ostal v vozilu."}` |
+| POST `/api/events` | `{"trigger":"scenario"}`, `{"trigger":"report","report_id":"…"}`, or `{"trigger":"road_closure","edge_id":"…","duration_s":240}` |
+| POST `/api/plans/propose` | `{"profiles":["urgent_first","minimum_disruption","baseline"]}` |
+| POST `/api/plans/{id}/approve` | `{"expected_plan_revision":4,"idempotency_key":"demo-approval"}` |
+| GET `/api/notifications`, `/api/metrics` | Mock dispatch feed and latest measured run results |
+| WS `/ws` | Full snapshots on change, with HTTP polling fallback in the UI |
+
+The dashboard starts at a reproducible presentation checkpoint, 130s in
+Ljubljana and 151s on the grid. Simulated time pauses while the operator
+reviews schedules. A new event or observed change to a plan commitment
+can make an open proposal stale. Regenerate choices if that happens.
+
+## Stage 2 CLI reference
+
 ## Setup (once per machine)
 
 ```powershell
