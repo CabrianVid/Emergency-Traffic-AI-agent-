@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from rescueflow.benchmark.inputs import digest, frozen_departures, prepare
-from rescueflow.benchmark.runner import percentile90
+from rescueflow.benchmark.runner import audit_stop_warnings, percentile90
 from rescueflow.sumo.env import resolve_sumo_env
 
 
@@ -23,3 +23,11 @@ def test_repreparing_seed_preserves_frozen_manifest(tmp_path: Path):
     assert " A4A5 " not in route_file
     assert prepare(tmp_path, "logistics", "closure", 5) == inputs
     assert digest(inputs / "manifest.json") == manifest_hash
+
+
+def test_skip_warning_is_benign_only_if_trip_restarted_at_replacement():
+    warning = "Warning: Vehicle 'R1' skips stop on lane 'A0A1_0' time=206.00."
+    old = {"vehicle_id": "R1", "depart_s": 176, "arrival_s": 206, "vaporized": "traci"}
+    new = {"vehicle_id": "R1", "depart_s": 206, "arrival_s": 1900, "vaporized": ""}
+    assert audit_stop_warnings([warning], [old]) == (0, 1)
+    assert audit_stop_warnings([warning], [old, new]) == (1, 0)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -57,6 +58,23 @@ def _trip_rows(path: Path) -> list[dict]:
             "devices": trip.get("devices", ""),
         })
     return rows
+
+
+def audit_stop_warnings(lines: list[str], trips: list[dict]) -> tuple[int, int]:
+    """Distinguish a lost stop from SUMO closing an intentionally replaced trip."""
+    replaced = {(row["vehicle_id"], row["arrival_s"]) for row in trips if row["vaporized"] == "traci"}
+    restarted = {(row["vehicle_id"], row["depart_s"]) for row in trips}
+    superseded = unmatched = 0
+    for line in lines:
+        match = re.search(r"Vehicle '([^']+)' skips stop on lane .* time=(\d+(?:\.\d+)?)", line)
+        if match is None:
+            continue
+        marker = match[1], float(match[2])
+        if marker in replaced and marker in restarted:
+            superseded += 1
+        else:
+            unmatched += 1
+    return superseded, unmatched
 
 
 class LogisticsRun:
@@ -277,6 +295,7 @@ class LogisticsRun:
 
 def execute(inputs: Path, output: Path, policy: str, record: bool = False) -> dict:
     output.mkdir(parents=True, exist_ok=True)
+    git_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip() or None
     meta = json.loads((inputs / "manifest.json").read_text(encoding="utf-8"))
     for filename, fingerprint in meta["files"].items():
         if digest(inputs / filename) != fingerprint:
@@ -331,7 +350,8 @@ def execute(inputs: Path, output: Path, policy: str, record: bool = False) -> di
         failures.append("Frozen urgent probe did not receive the blue-light device")
     if any("Error:" in line for line in warning_lines):
         failures.append("SUMO reported errors; see warnings.log")
-    if any(" skips stop on lane " in line for line in warning_lines):
+    superseded_stops, skipped_stops = audit_stop_warnings(warning_lines, trips)
+    if skipped_stops:
         failures.append("SUMO skipped a scheduled vehicle stop; see warnings.log")
     requested = sum(e["kind"] == "priority_requested" for e in observations)
     restored = sum(e["kind"] == "restored" for e in observations)
@@ -355,7 +375,7 @@ def execute(inputs: Path, output: Path, policy: str, record: bool = False) -> di
         **{key: meta[key] for key in ("suite", "scenario", "seed", "horizon_s", "response_target_s", "weights")},
         "policy": policy, "inputs_sha256": checksum, "valid": not failures, "failures": failures,
         "sumo_version": controller._read_sumo_version(ensure_sumolib_importable()),
-        "git_sha": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip() or None,
+        "git_sha": git_sha,
         "emergency_count": emergency_count, "emergencies_unserved": emergency_count - len(response),
         "responses_s": {row["task_id"]: row["response_s"] for row in rows if row["response_s"] is not None},
         "response": statistics(response),
@@ -377,6 +397,7 @@ def execute(inputs: Path, output: Path, policy: str, record: bool = False) -> di
         "preemptions": sum(e["kind"] == "phase_shortened" for e in observations),
         "seconds_shortened": sum(e.get("shortened_by_s", 0) for e in observations if e["kind"] == "phase_shortened"),
         "priority_conflicts": sum(e["kind"] == "priority_deferred" for e in observations),
+        "superseded_stop_warnings": superseded_stops, "unmatched_stop_warnings": skipped_stops,
         "warnings": len(warning_lines),
     }
     world = runner.world if runner else world

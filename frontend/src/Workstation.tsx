@@ -1,4 +1,5 @@
 import { Activity as ActivityIcon, ArrowRight, Check, ClipboardList, Radio, Signal, Timer, Truck } from 'lucide-react'
+import { BenchmarkResults } from './BenchmarkResults'
 import { clock, taskLabel, terminalStatuses, vehicleColors, vehicleStatus, words } from './model'
 import type { Activity, Metrics, Proposal, Snapshot, Stop, World } from './model'
 
@@ -109,6 +110,8 @@ export function Results({ metrics, onPolicy, disabled }: { metrics: Metrics; onP
   return <section className="panel results-panel">
     <header className="panel-head"><div className="section-title"><ActivityIcon size={16}/><h2>Run results</h2></div><span className="tag">Observed · simulated</span></header>
     <div className="results-body">
+      <BenchmarkResults/>
+      <h3>Current live simulator session</h3>
       <div className="result-stats">
         <div><small>Civilian vehicles observed</small><strong>{metrics.civilian_observed}</strong></div>
         <div><small>Observed civilian time loss</small><strong>{clock(metrics.civilian_time_loss_s)}</strong></div>

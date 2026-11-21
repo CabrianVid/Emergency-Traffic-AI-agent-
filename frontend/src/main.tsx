@@ -214,9 +214,9 @@ function App() {
         {results && <Results metrics={state.metrics} disabled={!live || busy} onPolicy={(baseline) => void command('/api/plans/propose', { profiles: baseline ? ['baseline'] : ['urgent_first', 'minimum_disruption'] })}/>}
         <div className="workspace">
           <Fleet world={state.world} selected={selected} onSelect={select}/>
-          <CityMap key={run} geometry={geometry} snapshot={state} proposal={selection}
+          <CityMap key={`map-${run}`} geometry={geometry} snapshot={state} proposal={selection}
             selected={selected} onSelect={select} edge={edge} onEdge={setEdge}/>
-          <Dispatch key={run} state={state} selection={selection} selectPlan={selectPlan} busy={busy || connection === 'offline'}
+          <Dispatch key={`dispatch-${run}`} state={state} selection={selection} selectPlan={selectPlan} busy={busy || connection === 'offline'}
             error={error} command={command} refresh={send} road={edge}/>
         </div>
         <div className="bottom-grid"><Schedule snapshot={state} proposal={selection} selected={selected} onSelect={select}/><ActivityLog snapshot={state}/></div>

@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from rescueflow.dashboard.agent import DispatcherAgent
@@ -258,6 +258,16 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
     @app.get("/api/metrics", response_model=MetricsView)
     async def metrics():
         return app.state.runtime.state.get("metrics", {})
+
+    @app.get("/api/benchmarks")
+    async def benchmarks():
+        configured = os.getenv("RESCUEFLOW_BENCHMARK")
+        report = Path(configured) if configured else Path("experiments/benchmark.json")
+        if not configured and not report.is_file():
+            report = Path("experiments/published/benchmark.json")
+        if not report.is_file():
+            raise HTTPException(404, "No recorded benchmark report is available.")
+        return FileResponse(report, media_type="application/json")
 
     @app.websocket("/ws")
     async def snapshots(socket: WebSocket):

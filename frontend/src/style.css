@@ -251,6 +251,11 @@ main { margin: 0 auto; max-width: 1820px; padding: 19px 26px 0; }
 .results-body th, .results-body td { border-bottom: 1px solid var(--line); padding: 6px 8px; }
 .results-body td { font-family: var(--mono); }
 .button-row button { padding: 6px 10px; border: 1px solid #465b70; border-radius: 6px; font-size: 11px; }
+.bench-results { border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 13px; }
+.bench-scroll { overflow-x: auto; }
+.bench-scroll table { width: min(860px, 100%); min-width: 610px; }
+.bench-scroll caption { text-align: left; padding: 3px 8px 7px; font-size: 11px; color: var(--muted); }
+.bench-note { padding-bottom: 12px; }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 14px 0; color: var(--fine); font-size: 11px; }
 footer span:last-child { display: flex; align-items: center; gap: 6px; }
 
