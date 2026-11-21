@@ -1,170 +1,98 @@
-# Implementation status -- prompt 2/4
+# Implementation status — prompt 3/4
 
-**Date:** 2026-11-21
-**Reviewed baseline:** `a36108b` (restored the snapshot return from
-`step()`), after prompt 2's live SUMO loop (`27a6199`), disruption events
-and solver hardening (`d02a834`), and green-wave work (`9a84a06`).
-**Environment:** same as prompt 1 (Windows 11, Python 3.13.9 via
-`--system-site-packages` venv, Eclipse SUMO 1.28.0).
+Updated 2026-11-21. Verified on Windows 11 with Python 3.13.9, Node 22
+and Eclipse SUMO 1.28.0. The implementation checkpoints are
+`c16e22e` (hospital capacity and plan equivalence), `9c5d3ce` (API and
+network), and `c43c0a5` (workstation and demo). Run `git log -4 --oneline`
+to see the handoff commit as well.
 
-## Pre-prompt-3 review
+## What works
 
-- `sim breakdown` now parses and validates reports before opening or
-  changing a live SUMO session. If both `--vehicle` and `--text` are
-  supplied, their vehicle IDs must agree. A valid report still freezes the
-  vehicle at its observed position and uses that node for recovery.
-- `rescueflow doctor` passed. `pytest tests/ -v` passed all 45 cases,
-  including three new cases confirming that invalid text, conflicting
-  equipment custody, and mismatched vehicle IDs leave saved SUMO state,
-  world state, and the event log untouched.
-- The full CLI breakdown demo passed in an isolated SUMO 1.28.0 run.
-  B0 and both A1 profiles produced feasible proposals. The approved B0
-  plan issued mock dispatch messages. R1 completed a 180-second transfer
-  at A2 and delivered K1 to H1 (A6). The log recorded signal phase
-  shortening, priority passage, and restoration.
-- H1 receiving capacity is checked when validating proposals. During
-  live execution, an already committed stop can still complete inside a
-  zero-capacity window. An isolated run with capacity closed through
-  900s recorded T3's handover at 554s.
-- A1 can label plans with different routes and scores as "identical"
-  because its comparison uses only the sets of assigned and unserved
-  task IDs. This occurred for the two profiles in the live breakdown
-  demo.
+- The React workstation renders a live fleet, task deadlines, receiving
+  sites, equipment custody, committed routes, proposed routes, selected
+  road closures, traffic lights, a before/after vehicle timeline, and
+  mock dispatch notifications. Its controls support scenario selection,
+  simulation speed, pause, play, step, reset, and map zoom.
+- FastAPI serializes simulator commands on one worker with exclusive
+  TraCI ownership. The UI reads versioned snapshots over WebSocket or
+  HTTP polling. Ordinary position updates advance `telemetry_seq`.
+  Service completions and other planning changes advance `plan_revision`.
+- The default network is Ljubljana's Tabor/UKC area, imported by
+  `netconvert` from the committed OpenStreetMap road extract. The UI,
+  optimizer, and simulator use its same junction and edge identifiers.
+  The fictional 7×7 grid remains selectable and is the startup fallback.
+- Crew reports validate against the authoritative vehicle and equipment
+  state. Optional OpenAI structured extraction runs outside the SUMO
+  worker. Without a key, the UI explicitly shows
+  “Rule-based fallback — AI unavailable”. Scripted cases cover R2/K1,
+  a new urgent patient, and fog plus a receiving-capacity reduction.
+- Feasible B0 and A1 proposals include estimated ETAs, deadline misses,
+  assignment changes, and infeasibility or unserved-task notes. The
+  comparison groups alternatives only when their complete schedules
+  match. The human dispatcher approves a revisioned, expiring proposal.
+  Idempotent commit, physical route changes, and the mock dispatch
+  feed are exercised together in the API test.
+- A hospital blocked by a zero-capacity window holds arriving vehicles
+  at the SUMO stop. Custody transfers after the dwell and a valid
+  receiving slot. The live regression covers waiting across CLI
+  save-state and resume. New estimated insertions start at or after
+  the current simulation time.
+- Results show observed dispatch-to-pickup samples, deadline delays,
+  and civilian SUMO time loss. The comparison calculates average and
+  nearest-rank P90 from the latest samples for each policy in separate
+  replays of the same network/scenario. It keeps observations across
+  resets during the current server session.
 
-## What prompt 2 actually delivers (and how it was verified)
+## Verified commands and runs
 
-Everything below was verified by **actually running it against the real
-SUMO simulator**, not by reading the code. Several real bugs were found
-and fixed this way -- see docs/DECISIONS.md "Prompt 2 decisions" and
-docs/INTEGRATIONS.md for the specifics; this section only states the
-final, working behavior.
-
-1. **Live execution loop** (`TraciSimulationController`): `sim load`
-   spawns every ambulance that has stops into a real SUMO session;
-   `sim advance` steps it, detecting real dwell begin/completion via
-   `isStopped()` transitions, transferring asset custody and completing
-   tasks *only* on real completion, and mirroring live
-   edge/position into `WorldState`. Verified over a continuous ~1850s
-   live run: all 7 scenario tasks (T1-T7) completed via genuine SUMO
-   dwell detection, with `Stop.service_completed_at_s` persisted correctly
-   across separate CLI process invocations (via SUMO's own
-   save-state/load-state, not a kept-alive process).
-2. **Physical breakdown + equipment recovery**: `sim breakdown --vehicle
-   R2` physically freezes R2 at its *real* live edge/position (observed:
-   froze at edge `A1A2`, node `A2` -- not the static approximation
-   prompt 1 used), strands K1 there, and the broken vehicle's position
-   never changes again afterward (verified over 50+ further steps, within
-   a documented few-meter one-time deceleration-settling tolerance -- see
-   docs/INTEGRATIONS.md). `plan b0`/`plan approve` then physically
-   rerouted R1 to drive to the real breakdown node, dwell 180s (the
-   transfer interval), and deliver K1 to the hospital -- K1's tracked
-   location moved `vehicle:R2` -> `roadside:A2` -> `vehicle:R1` ->
-   `hospital:A6`, never teleported, never duplicated, confirmed by
-   `tests/test_sumo_execution.py` and a full manual live run.
-3. **Road closures**: `sim closure --edge ID [--duration S]` disallows the
-   edge's lanes in the live session (vehicles already on it are not
-   ejected) and records the closure in `WorldState.closed_edges`;
-   `SumoTravelTimeProvider` (a hand-rolled Dijkstra, since
-   `sumolib.Net.getShortestPath` has no edge-exclusion parameter) routes
-   every subsequent B0/A1 query around it identically, with zero
-   planner-side code change. Auto-reopens via `ScheduledRestoration` if
-   `--duration` was given.
-4. **Four new executed event types**: `vehicle_delay`, `priority_changed`,
-   `hospital_capacity_changed`, `helicopter_grounded` are now fully typed,
-   validated, *and* applied (prompt 1 only typed them).
-   `helicopter_grounded` auto-restores via the same generic
-   `ScheduledRestoration` mechanism as road-closure reopening, ticked by
-   every `sim advance` (and independently testable without SUMO via
-   `events.apply.tick_scheduled_restorations`).
-5. **A1 hard wall-clock solve budget + solver audit log**: both
-   `BaselinePlanner`/`OptimizedPlanner` accept a `solve_budget_s` and stop
-   (reporting the rest unserved, logged) if exceeded; every candidate
-   insertion attempt, rejection, and final selected plan's score/ETA
-   assumption is appended to `simulation/state/solver_log.jsonl`
-   (`rescueflow.planning.solver_log.SolverLog`).
-6. **Green-wave signal priority**: a full, safety-constrained
-   implementation (`rescueflow.sumo.green_wave.GreenWaveController`) --
-   see docs/INTEGRATIONS.md for the exact safety model. Verified in a live
-   run: real requests, real `setPhaseDuration` shortenings (never a
-   skipped yellow/all-red), real grants, timeouts, and restorations, for
-   multiple junctions along a critical-priority vehicle's route in
-   sequence. Pure-logic conflict-resolution (priority rank, then ETA) is
-   unit-tested without SUMO in `tests/test_green_wave.py`.
-7. **Emergency-driving fairness**: two ambulance SUMO vTypes
-   (`ambulance` = real `vClass=emergency`; `ambulance_routine` =
-   `vClass=passenger`), assigned by the *same* rule
-   (`TraciSimulationController._vtype_for_stops`) regardless of whether
-   B0 or A1 produced the assignment -- verified live: R3 (critical
-   patient) got `ambulance`/`emergency`, R2 and R5 (non-critical) got
-   `ambulance_routine`/`passenger`.
-8. **Dispatch adapter, approval gate**: unchanged from prompt 1 (still
-   the only path allowed to commit), extended so `plan approve`
-   automatically pushes the approved reroute into a live `sim` session if
-   one exists (`TraciSimulationController.apply_committed_plan`).
-9. **Repositioning (item 9 in the prompt)**: **not implemented**, as
-   explicitly permitted ("leave this documented stretch feature disabled
-   rather than half-implementing it"). No code, no stub, no claim.
-
-## Stable programmatic controls (CLI)
-
-`sim load` / `reset` / `advance` / `breakdown` / `closure` /
-`toggle-green-wave` / `export-run`, plus the four new `event` subcommands
-(`delay`/`priority`/`hospital-capacity`/`helicopter-grounded`). See
-docs/RUNBOOK.md for the full reference and the exact Demo A/B/C scripts in
-docs/SCENARIOS.md. These are plain CLI commands today (as prompt 2 allows:
-"CLI or Python service"); each wraps exactly one `TraciSimulationController`
-/ planner / event-application call with no logic of its own, so a future
-FastAPI wrapper (prompt 3) can call the same underlying functions directly
-instead of shelling out to the CLI.
-
-## Prompt 2 test results before the review
-
-```
+```powershell
+.\.venv\Scripts\rescueflow.exe doctor
 .\.venv\Scripts\python.exe -m pytest tests/ -v
-...
-42 passed in ~11s
+npm --prefix frontend run build
+.\.venv\Scripts\python.exe -m uvicorn rescueflow.dashboard.app:app --host 127.0.0.1 --port 8000
+npm --prefix frontend run dev -- --port 5173
 ```
 
-27 tests carried over unchanged from prompt 1 (per the prompt's "reuse the
-stage 1 tests, do not overwrite them when they expose a bug" -- none
-needed to be weakened; two *production* bugs they didn't cover were found
-instead via live runs and fixed, see docs/DECISIONS.md). 15 new:
-`tests/test_sumo_execution.py` (3, live SUMO: pickup/dropoff + custody
-transfer, broken-vehicle freeze, live closure), `tests/test_green_wave.py`
-(4, pure logic, no SUMO), `tests/test_events_prompt2.py` (8, the four new
-event types' validation/application/auto-restoration).
+- Doctor passed and all 48 tests passed. The tests used real SUMO for
+  Ljubljana report-to-recovery, the training grid, dwell/custody,
+  road closure, and hospital handover verification. The Vite production
+  build passed TypeScript checking and bundling.
+- The browser displayed the live console, validated the example
+  Slovenian crew report, and showed two computed repair cards. The
+  actual approval, dispatch messages, simulation controls, K1 delivery,
+  and replay were verified through the API. Browser input access
+  became unavailable during the later visual checks.
+- The original CLI breakdown workflow still froze R2, approved a
+  feasible B0 plan, and completed K1 recovery on the synthetic grid.
+  On Ljubljana, B0 and A1 replays each delivered K1 to H1 and populated
+  measured comparison rows. The final proxy smoke run recorded three
+  pickups per policy, with a 256.7s average and 403s P90 for each.
+  The proxy smoke also exercised playback, road closure and timed
+  reopening, approval retry, and reset. The urgent and fog scripts
+  produced feasible choices. See the [demo script](DEMO_SCRIPT.md) and
+  [API runbook](RUNBOOK.md) for reproduction.
 
-## Known limitations / explicitly out of scope for prompt 2
+## Boundaries and prompt 4
 
-- OR-Tools (A1 stage 2) still not implemented -- optional per the plan,
-  deferred again (docs/DECISIONS.md).
-- Repositioning not implemented (explicitly permitted to skip rather than
-  half-build).
-- `vehicle_restored` (manual recovery of a broken vehicle) is typed but
-  not executed -- not in prompt 2's required list either.
-- A single spawned vehicle's SUMO type (`ambulance` vs `ambulance_routine`)
-  is fixed for its whole established itinerary, not switched exactly at a
-  leg boundary mid-route -- documented in docs/INTEGRATIONS.md; green-wave
-  eligibility itself is unaffected (recomputed every step from live task
-  status).
-- No FastAPI/frontend wrapper -- explicitly prompt 3 scope; the CLI
-  commands are already structured 1:1 against plain functions so that
-  wrapper should be straightforward.
-- Benchmark suites (Suite L/T/F, docs/DEVELOPMENT_PLAN.md section 10) --
-  `BenchmarkRunner` remains a protocol only.
-
-## Recommended next prompt (prompt 3 scope)
-
-1. FastAPI wrapper around the existing `rescueflow.*` functions (not the
-   CLI) -- `scenario`, `events`, `planning`, `approval`,
-   `sumo.controller` already have no CLI-specific logic baked in.
-2. LLM-backed `EventInterpreter` (stage 3 of docs/DEVELOPMENT_PLAN.md
-   section 9) behind the same `EventInterpreter` protocol, falling back to
-   the existing rule-based parser/structured commands exactly as
-   docs/CONTRACTS.md 9.1 requires (absent API key must never block).
-3. Dispatcher dashboard frontend (map + before/after timeline + plan
-   cards + mock dispatch notification feed) -- consume the `sim`/`plan`
-   JSON outputs directly; `simulation/state/sim_event_log.jsonl` and
-   `solver_log.jsonl` are already structured for this.
-4. Only after 1-3: the Suite L/T/F benchmark runner and OR-Tools stage 2,
-   per docs/DEVELOPMENT_PLAN.md's own sequencing.
+- Real OpenAI calls were untested without a supplied key. The provider
+  SDK was installed and the no-key path was verified. Free text
+  currently supports a vehicle breakdown and the same vehicle's
+  stranded equipment in one report. Use typed triggers for the other
+  scenarios.
+- Road ETAs use free-flow estimates on the selected SUMO graph.
+  Civilian time loss is the last observed SUMO value per sampled
+  vehicle. Helicopter ETA is analytical. The dashboard asks the
+  operator to advance past an internal junction edge before rerouting
+  or freezing a vehicle there. Synthetic hospital sites are anchored
+  to map junctions, and traffic demand is synthetic.
+- The demo starts paused at a fixed warm-up point and pauses when
+  choices are shown. The response comparison summarizes individual
+  replays. Each result can have a different set of observed tasks.
+  It does not measure a controlled policy effect.
+- Prompt 4 should implement independent, matched-seed Suite L and T
+  runs from serialized starting conditions and add Suite F when
+  appropriate. Use identical demand and declared decision delays,
+  check trip/stop completion and signal restoration, and derive CSVs,
+  plots and honest comparisons from recorded results. OR-Tools and
+  optional repositioning remain deferred. See the
+  [development plan](DEVELOPMENT_PLAN.md).
