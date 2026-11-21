@@ -394,6 +394,12 @@ class TraciSimulationController:
                 })
             self._enforce_frozen(world, traci)
 
+        positions = {
+            vid: {"edge": traci.vehicle.getRoadID(vid), "pos": traci.vehicle.getLanePosition(vid)}
+            for vid in traci.vehicle.getIDList()
+        }
+        return SimulationSnapshot(telemetry_seq=world.telemetry_seq, sim_time_s=world.sim_time_s, vehicle_positions=positions)
+
     def _enforce_frozen(self, world: WorldState, traci) -> None:
         """A broken vehicle must never move again. `setSpeed(0)` alone left
         a small (few-meter) residual drift over many steps in practice (a

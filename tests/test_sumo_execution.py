@@ -70,8 +70,9 @@ def test_pickup_and_dropoff_complete_and_transfer_custody(tmp_path):
 
     for _ in range(40):
         controller.connect(resume=True, world=world)
-        controller.step(world, n=30)
+        snapshot = controller.step(world, n=30)
         controller.save_and_close()
+        assert snapshot is not None and snapshot.sim_time_s == world.sim_time_s, "step() must return a real snapshot"
         if world.tasks["T1"].status.value == "completed":
             break
 
