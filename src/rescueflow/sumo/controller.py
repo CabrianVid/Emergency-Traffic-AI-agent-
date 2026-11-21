@@ -25,6 +25,7 @@ re-adding is unambiguous and testable.
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from rescueflow.events.apply import tick_scheduled_restorations
@@ -52,12 +53,16 @@ class TraciSimulationController:
     def __init__(
         self, sumocfg_path: str, net_path: str, state_path: str = DEFAULT_STATE_PATH,
         seed: int = 42, *, allow_teleport: bool = True,
+        observations_dir: Path | None = None, junction_stops: bool = False,
     ) -> None:
         self.sumocfg_path = sumocfg_path
         self.net_path = net_path
         self.state_path = state_path
         self.seed = seed
         self.allow_teleport = allow_teleport
+        self.observations_dir = observations_dir
+        self.junction_stops = junction_stops
+        self.priority_probe_ids: set[str] = set()
         self._connected = False
         self._travel: SumoTravelTimeProvider | None = None
         self.green_wave = GreenWaveController()
@@ -93,6 +98,16 @@ class TraciSimulationController:
             args += ["--load-state", self.state_path]
         if not self.allow_teleport:
             args += ["--time-to-teleport", "-1"]
+        if self.observations_dir is not None:
+            output = self.observations_dir.resolve()
+            args += [
+                "--tripinfo-output", str(output / "tripinfo.xml"),
+                "--tripinfo-output.write-unfinished", "true",
+                "--vehroute-output", str(output / "routes.xml"),
+                "--vehroute-output.exit-times", "true",
+                "--vehroute-output.write-unfinished", "true",
+                "--error-log", str(output / "warnings.log"),
+            ]
         traci.start(args)
         self._connected = True
         self._ensure_travel().set_closed_edges(world.closed_edges)
@@ -196,6 +211,7 @@ class TraciSimulationController:
                 )
             departure_edge = segment[0]
             departure_index = len(edges)
+            at_origin = not edges
             if edges and edges[-1] == departure_edge:
                 departure_index -= 1
                 edges.extend(segment[1:])
@@ -206,6 +222,7 @@ class TraciSimulationController:
                     "edge_id": departure_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
                     "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
                     "route_index": departure_index,
+                    "at_origin": at_origin,
                 })
             pending = []
             stop_plan.append({
@@ -222,6 +239,7 @@ class TraciSimulationController:
                     "edge_id": fallback_edge, "stop_id": pend.stop_id, "task_id": pend.task_id,
                     "stop_kind": pend.kind.value, "duration": self._stop_duration(world, pend),
                     "route_index": max(0, len(edges) - 1),
+                    "at_origin": not edges,
                 })
             if not edges:
                 edges = [fallback_edge]
@@ -259,13 +277,26 @@ class TraciSimulationController:
             depart=str(traci.simulation.getTime()), departLane="best", **depart_kwargs
         )
         net = self._ensure_travel().net
-        for entry in stop_plan:
+        occurrences = Counter(entry["edge_id"] for entry in stop_plan)
+        placed: Counter = Counter()
+        for stop_index, entry in enumerate(stop_plan):
             edge = net.getEdge(entry["edge_id"])
             index = entry["route_index"] + 1
             connections = edge.getOutgoing().get(net.getEdge(edges[index]), []) if index < len(edges) else []
             lane = connections[0].getFromLane() if connections else edge.getLane(0)
-            traci.vehicle.setStop(
-                vehicle.id, entry["edge_id"], pos=min(1.0, lane.getLength() * 0.9),
+            position = min(1.0, lane.getLength() * 0.9)
+            # SUMO treats an identical later setStop as an edit to the
+            # existing stop, even if the route revisits this edge.
+            edge_id = entry["edge_id"]
+            count = occurrences[edge_id]
+            spacing = min(0.5, lane.getLength() / (2 * count))
+            if self.junction_stops and not entry.get("at_origin"):
+                position = max(position, lane.getLength() - 1.0 - spacing * (count - placed[edge_id] - 1))
+            else:
+                position = min(lane.getLength() * 0.99, position + spacing * placed[edge_id])
+            placed[edge_id] += 1
+            traci.vehicle.insertStop(
+                vehicle.id, stop_index, entry["edge_id"], pos=position,
                 laneIndex=lane.getIndex(), duration=entry["duration"], flags=0,
             )
 
@@ -464,7 +495,7 @@ class TraciSimulationController:
 
     # -- stepping --------------------------------------------------------------
 
-    def step(self, world: WorldState, n: int = 1) -> SimulationSnapshot:
+    def step(self, world: WorldState, n: int = 1, *, capture_positions: bool = True) -> SimulationSnapshot:
         import traci  # noqa: PLC0415
 
         self._enforce_frozen(world, traci)
@@ -474,6 +505,13 @@ class TraciSimulationController:
             traci.simulationStep()
             world.sim_time_s = traci.simulation.getTime()
             world.bump_telemetry()
+            if self.observations_dir is not None:
+                for ids, kind in (
+                    (traci.simulation.getStartingTeleportIDList(), "teleport_started"),
+                    (traci.simulation.getCollidingVehiclesIDList(), "collision"),
+                ):
+                    for vehicle_id in ids:
+                        self.event_log.append({"kind": kind, "vehicle_id": vehicle_id, "sim_time_s": world.sim_time_s})
             self._process_arrivals_and_stops(world, traci)
             self._update_positions(world, traci)
             self._run_green_wave(world, traci)
@@ -489,7 +527,7 @@ class TraciSimulationController:
         positions = {
             vid: {"edge": traci.vehicle.getRoadID(vid), "pos": traci.vehicle.getLanePosition(vid)}
             for vid in traci.vehicle.getIDList()
-        }
+        } if capture_positions else {}
         return SimulationSnapshot(telemetry_seq=world.telemetry_seq, sim_time_s=world.sim_time_s, vehicle_positions=positions)
 
     def _hold_hospital_dropoffs(self, world: WorldState, traci) -> None:
@@ -575,29 +613,37 @@ class TraciSimulationController:
             ptr = self._next_stop_ptr.get(vehicle_id, 0)
             if ptr >= len(queue):
                 continue
+            was = self._was_stopped.get(vehicle_id, False)
             if vehicle_id in arrived:
-                # Reached the end of its route -- every remaining queued
-                # stop must have already been serviced for SUMO to allow
-                # that (a route cannot pass a pending `setStop`).
-                while ptr < len(queue):
+                if was:
                     self._complete_stop(world, vehicle_id, queue[ptr])
                     ptr += 1
                 self._next_stop_ptr[vehicle_id] = ptr
+                if ptr != len(queue):
+                    self.event_log.append({
+                        "kind": "missing_sumo_stop", "vehicle_id": vehicle_id,
+                        "sim_time_s": world.sim_time_s, "remaining": queue[ptr:],
+                    })
+                self._was_stopped[vehicle_id] = False
                 continue
             if vehicle_id not in live:
                 continue
             stopped_now = traci.vehicle.isStopped(vehicle_id)
-            was = self._was_stopped.get(vehicle_id, False)
-            if stopped_now and not was:
+            if was and len(traci.vehicle.getStops(vehicle_id)) < len(queue) - ptr:
+                self._complete_stop(world, vehicle_id, queue[ptr])
+                ptr += 1
+                self._next_stop_ptr[vehicle_id] = ptr
+                was = False
+            if stopped_now and not was and ptr < len(queue):
                 stop = next((s for s in world.vehicles[vehicle_id].route_stops if s.stop_id == queue[ptr]["stop_id"]), None)
                 if stop is not None:
                     stop.service_start_s = world.sim_time_s
                 self.event_log.append({
                     "sim_time_s": world.sim_time_s, "kind": "stop_begin", "vehicle_id": vehicle_id, **queue[ptr],
+                    "node_id": stop.node_id if stop is not None else None,
+                    "edge_id": traci.vehicle.getRoadID(vehicle_id),
+                    "xy": traci.vehicle.getPosition(vehicle_id),
                 })
-            if was and not stopped_now:
-                self._complete_stop(world, vehicle_id, queue[ptr])
-                self._next_stop_ptr[vehicle_id] = ptr + 1
             self._was_stopped[vehicle_id] = stopped_now
 
     def _complete_stop(self, world: WorldState, vehicle_id: str, entry: dict) -> None:
@@ -703,7 +749,7 @@ class TraciSimulationController:
     def _run_green_wave(self, world: WorldState, traci) -> None:
         self._ensure_travel().set_closed_edges(world.closed_edges)
         live = set(traci.vehicle.getIDList())
-        eligible: dict[str, int] = {}
+        eligible: dict[str, int] = dict.fromkeys(self.priority_probe_ids & live, 0)
         for vehicle_id, vehicle in world.vehicles.items():
             if vehicle_id not in live or vehicle.status == VehicleStatus.broken:
                 continue

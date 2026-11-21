@@ -82,7 +82,7 @@ class SumoTravelTimeProvider:
         dist = {from_edge: 0.0}
         prev: dict = {}
         visited = set()
-        heap = [(0.0, id(from_edge), from_edge)]
+        heap = [(0.0, from_edge.getID(), from_edge)]
         while heap:
             d, _, edge = heapq.heappop(heap)
             if edge in visited:
@@ -102,7 +102,7 @@ class SumoTravelTimeProvider:
                 if next_edge not in dist or nd < dist[next_edge]:
                     dist[next_edge] = nd
                     prev[next_edge] = edge
-                    heapq.heappush(heap, (nd, id(next_edge), next_edge))
+                    heapq.heappush(heap, (nd, next_edge.getID(), next_edge))
         return None
 
     def _best_path(self, origin_node: str, dest_node: str) -> list | None:

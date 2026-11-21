@@ -98,7 +98,9 @@ class DefaultPlanValidator:
         equipment_count = 0
         last_departure = float("-inf")
         for stop in stops:
-            if stop.arrival_s is not None and stop.arrival_s < last_departure - 1e-6:
+            # Observations can overrun an old estimate; compare only the
+            # pending estimates. History still supplies the running loads.
+            if stop.service_completed_at_s is None and stop.arrival_s is not None and stop.arrival_s < last_departure - 1e-6:
                 issues.append(
                     FeasibilityIssue(
                         code="non_monotonic_schedule",
@@ -107,7 +109,7 @@ class DefaultPlanValidator:
                         vehicle_id=vehicle.id,
                     )
                 )
-            if stop.departure_s is not None:
+            if stop.service_completed_at_s is None and stop.departure_s is not None:
                 last_departure = stop.departure_s
 
             if stop.task_id is None:

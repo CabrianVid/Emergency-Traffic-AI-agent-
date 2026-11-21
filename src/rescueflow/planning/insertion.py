@@ -20,6 +20,8 @@ from rescueflow.models.core import (
     Stop,
     StopKind,
     Task,
+    TaskKind,
+    TaskPriority,
     Vehicle,
     VehicleMode,
     VehicleStatus,
@@ -191,6 +193,7 @@ def greedy_insert_all(
     solver_log=None,
     policy: str = "",
     profile: str = "",
+    nearest_available_emergency: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Insert each task, in the given order, into the single cheapest
     feasible vehicle+position across the whole fleet, mutating
@@ -210,17 +213,32 @@ def greedy_insert_all(
             unserved.extend(t.id for t in tasks_sorted[tasks_sorted.index(task):])
             break
         best: InsertionCandidate | None = None
+        best_key = None
+        emergency = nearest_available_emergency and task.kind == TaskKind.urgent_response and task.priority == TaskPriority.critical
         for vehicle in working_vehicles.values():
             if not is_vehicle_eligible(world, vehicle, task):
                 continue
+            busy = vehicle.available_after_s > world.sim_time_s or any(
+                stop.service_completed_at_s is None for stop in vehicle.route_stops
+            )
             candidates = try_insert(world, travel, validator, vehicle, task)
+            if emergency and busy:
+                # Queue behind existing work when every suitably qualified
+                # unit is committed. Never make this fallback displace it.
+                candidates = [c for c in candidates if c.insertion_index == len(vehicle.route_stops)]
             if solver_log is not None:
                 solver_log.candidate_evaluated(
                     policy, profile, task.id, vehicle.id, bool(candidates),
                     candidates[0].added_travel_s if candidates else None,
                 )
-            if candidates and (best is None or candidates[0].added_travel_s < best.added_travel_s):
-                best = candidates[0]
+            if candidates:
+                candidate = candidates[0]
+                key = (candidate.added_travel_s,)
+                if emergency:
+                    pickup = next(stop for stop in candidate.stops if stop.task_id == task.id and stop.kind == StopKind.pickup)
+                    key = (busy, pickup.arrival_s, candidate.added_travel_s)
+                if best_key is None or key < best_key:
+                    best, best_key = candidate, key
         if best is None:
             unserved.append(task.id)
             if solver_log is not None:

@@ -54,11 +54,14 @@ class BaselinePlanner:
         validator: DefaultPlanValidator | None = None,
         solver_log: SolverLog | None = None,
         solve_budget_s: float = DEFAULT_SOLVE_BUDGET_S,
+        *,
+        nearest_available_emergency: bool = False,
     ) -> None:
         self.travel = travel
         self.validator = validator or DefaultPlanValidator()
         self.solver_log = solver_log
         self.solve_budget_s = solve_budget_s
+        self.nearest_available_emergency = nearest_available_emergency
 
     def baseline_repair(
         self, world: WorldState, event: Event | None, profile: str = "minimum_disruption"
@@ -71,6 +74,7 @@ class BaselinePlanner:
         changed_task_ids, unserved_task_ids = greedy_insert_all(
             world, self.travel, self.validator, working_vehicles, pending,
             deadline_monotonic=deadline, solver_log=self.solver_log, policy="b0", profile=profile,
+            nearest_available_emergency=self.nearest_available_emergency,
         )
 
         vehicle_plans = [

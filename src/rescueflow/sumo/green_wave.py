@@ -113,6 +113,8 @@ class GreenWaveController:
             if req.vehicle_id not in self._eligible:
                 self._emit(sim_time_s, "priority_cancelled", vehicle_id=req.vehicle_id, tls_id=req.tls_id,
                            reason="vehicle no longer eligible (task delivered, broken, or rerouted)")
+                req.state = "CANCELLED"
+                self._restore(traci, req.tls_id, sim_time_s, req)
                 self._requests.pop(key, None)
 
         by_tls: dict[str, list[_Request]] = {}
@@ -124,6 +126,15 @@ class GreenWaveController:
             winner = self._rank_requests(requests)[0]
             for req in requests:
                 if req.vehicle_id not in traci.vehicle.getIDList():
+                    req.state = "CANCELLED"
+                    self._restore(traci, tls_id, sim_time_s, req)
+                    done_keys.append((req.vehicle_id, req.tls_id))
+                    continue
+                if (req.tls_id, req.link_index) not in [(tls, link) for tls, link, *_ in traci.vehicle.getNextTLS(req.vehicle_id)]:
+                    req.state = "PASSAGE_CONFIRMED" if req.state == "COMPATIBLE_PRIORITY_GREEN" else "LEFT_APPROACH"
+                    if req.state == "PASSAGE_CONFIRMED":
+                        self._emit(sim_time_s, "priority_passage_confirmed", vehicle_id=req.vehicle_id, tls_id=req.tls_id)
+                    self._restore(traci, tls_id, sim_time_s, req)
                     done_keys.append((req.vehicle_id, req.tls_id))
                     continue
                 if req is not winner:
@@ -167,7 +178,8 @@ class GreenWaveController:
                 self._emit(sim_time_s, "priority_passage_confirmed", vehicle_id=req.vehicle_id, tls_id=req.tls_id)
             return
 
-        if "G" not in phases[current_idx].state and "g" not in phases[current_idx].state:
+        phase_state = phases[current_idx].state
+        if "y" in phase_state.lower() or not any(light in phase_state for light in "Gg"):
             # Yellow/all-red clearance phase -- never shortened, let it run.
             return
 
@@ -177,7 +189,8 @@ class GreenWaveController:
             if new_duration is not None:
                 traci.trafficlight.setPhaseDuration(req.tls_id, new_duration)
                 self._emit(sim_time_s, "phase_shortened", vehicle_id=req.vehicle_id, tls_id=req.tls_id,
-                           phase=current_idx, new_duration_s=new_duration)
+                           phase=current_idx, new_duration_s=new_duration,
+                           shortened_by_s=round(remaining - new_duration, 3))
             req.shortened_phase = (current_idx, True)
             req.state = "WAIT_FOR_MIN_GREEN"
 

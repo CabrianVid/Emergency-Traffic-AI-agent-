@@ -18,6 +18,13 @@ simulation/network/**/*.sumocfg
 simulation/state/
 *.sumo-output.xml
 *.tripinfo.xml
+experiments/inputs/
+experiments/runs/
+experiments/charts/
+experiments/smoke*/
+experiments/replay.html
+experiments/benchmark.json
+experiments/*.csv
 
 # The exported scenario fixture (simulation/scenario/scenario_v1.json) IS
 # checked in: it is small, stable, and is the "initial plan" every CLI
