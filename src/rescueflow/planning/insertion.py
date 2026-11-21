@@ -11,6 +11,7 @@ every schedule trivially easy to validate.
 from __future__ import annotations
 
 import itertools
+import time
 from dataclasses import dataclass
 
 from rescueflow.interfaces.protocols import TravelTimeProvider
@@ -181,22 +182,44 @@ def greedy_insert_all(
     validator: DefaultPlanValidator,
     working_vehicles: dict[str, Vehicle],
     tasks_sorted: list[Task],
+    deadline_monotonic: float | None = None,
+    solver_log=None,
+    policy: str = "",
+    profile: str = "",
 ) -> tuple[list[str], list[str]]:
     """Insert each task, in the given order, into the single cheapest
     feasible vehicle+position across the whole fleet, mutating
-    `working_vehicles` in place. Returns (assigned_task_ids, unserved_task_ids)."""
+    `working_vehicles` in place. Returns (assigned_task_ids, unserved_task_ids).
+
+    `deadline_monotonic` (a `time.monotonic()` value) is the hard wall-clock
+    solve budget (docs/DEVELOPMENT_PLAN.md prompt 2 item 5): once passed,
+    every remaining task is reported unserved-by-budget rather than the
+    search blocking the demo indefinitely -- logged via `solver_log` if
+    given, never silently."""
     assigned: list[str] = []
     unserved: list[str] = []
     for task in tasks_sorted:
+        if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+            if solver_log is not None:
+                solver_log.solve_budget_exhausted(policy, profile, time.monotonic(), deadline_monotonic)
+            unserved.extend(t.id for t in tasks_sorted[tasks_sorted.index(task):])
+            break
         best: InsertionCandidate | None = None
         for vehicle in working_vehicles.values():
             if not is_vehicle_eligible(world, vehicle, task):
                 continue
             candidates = try_insert(world, travel, validator, vehicle, task)
+            if solver_log is not None:
+                solver_log.candidate_evaluated(
+                    policy, profile, task.id, vehicle.id, bool(candidates),
+                    candidates[0].added_travel_s if candidates else None,
+                )
             if candidates and (best is None or candidates[0].added_travel_s < best.added_travel_s):
                 best = candidates[0]
         if best is None:
             unserved.append(task.id)
+            if solver_log is not None:
+                solver_log.candidate_rejected(policy, profile, task.id, "no eligible vehicle had a feasible insertion")
             continue
         working_vehicles[best.vehicle_id].route_stops = best.stops
         assigned.append(task.id)

@@ -200,6 +200,9 @@ class DefaultPlanValidator:
         for stop in stops:
             if stop.task_id is None or stop.arrival_s is None:
                 continue
+            if stop.service_completed_at_s is not None:
+                # Already happened -- the past cannot be made infeasible.
+                continue
             task = world.tasks.get(stop.task_id)
             if task is None or not task.time_window_hard:
                 continue
@@ -219,6 +222,11 @@ class DefaultPlanValidator:
         for vehicle_id, stops in merged.items():
             for stop in stops:
                 if stop.task_id is None or stop.kind.value != "pickup":
+                    continue
+                if stop.service_completed_at_s is not None:
+                    # Already physically happened -- checking it against
+                    # *current* (since-moved-on) asset location would check
+                    # the wrong time slice. See docs/CONTRACTS.md.
                     continue
                 task = world.tasks.get(stop.task_id)
                 if task is None:

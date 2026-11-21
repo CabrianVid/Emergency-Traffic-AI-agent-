@@ -15,6 +15,7 @@ docs/DECISIONS.md. Behavior (docs/CONTRACTS.md 6.2):
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from rescueflow.interfaces.protocols import TravelTimeProvider
@@ -31,7 +32,10 @@ from rescueflow.models.core import (
 )
 from rescueflow.planning.insertion import greedy_insert_all
 from rescueflow.planning.scoring import compute_score
+from rescueflow.planning.solver_log import SolverLog
 from rescueflow.planning.validator import DefaultPlanValidator, merged_vehicle_stops
+
+DEFAULT_SOLVE_BUDGET_S = 2.0
 
 _PRIORITY_RANK = {TaskPriority.critical: 0, TaskPriority.high: 1, TaskPriority.routine: 2}
 
@@ -44,9 +48,17 @@ def _sort_key(task: Task) -> tuple:
 class BaselinePlanner:
     """Concrete `Planner.baseline_repair`."""
 
-    def __init__(self, travel: TravelTimeProvider, validator: DefaultPlanValidator | None = None) -> None:
+    def __init__(
+        self,
+        travel: TravelTimeProvider,
+        validator: DefaultPlanValidator | None = None,
+        solver_log: SolverLog | None = None,
+        solve_budget_s: float = DEFAULT_SOLVE_BUDGET_S,
+    ) -> None:
         self.travel = travel
         self.validator = validator or DefaultPlanValidator()
+        self.solver_log = solver_log
+        self.solve_budget_s = solve_budget_s
 
     def baseline_repair(
         self, world: WorldState, event: Event | None, profile: str = "minimum_disruption"
@@ -55,8 +67,10 @@ class BaselinePlanner:
         pending.sort(key=_sort_key)
 
         working_vehicles = {vid: v.model_copy(deep=True) for vid, v in world.vehicles.items()}
+        deadline = time.monotonic() + self.solve_budget_s
         changed_task_ids, unserved_task_ids = greedy_insert_all(
-            world, self.travel, self.validator, working_vehicles, pending
+            world, self.travel, self.validator, working_vehicles, pending,
+            deadline_monotonic=deadline, solver_log=self.solver_log, policy="b0", profile=profile,
         )
 
         vehicle_plans = [
@@ -85,4 +99,9 @@ class BaselinePlanner:
         merged = merged_vehicle_stops(world, proposal)
         proposal.score = compute_score(world, proposal, merged)
         proposal.feasibility = self.validator.validate(world, proposal)
+        if self.solver_log is not None:
+            self.solver_log.plan_selected(
+                proposal.proposal_id, "b0", proposal.profile, proposal.score.model_dump(),
+                eta_assumption="static free-flow shortest path on the SUMO network graph (docs/DECISIONS.md)",
+            )
         return proposal

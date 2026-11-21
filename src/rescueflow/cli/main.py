@@ -19,10 +19,12 @@ import click
 from rescueflow.approval import DefaultApprovalService
 from rescueflow.dispatch import MockDispatchNotificationAdapter
 from rescueflow.events import EventParseError, RuleBasedEventInterpreter, ValidationError, apply_event
-from rescueflow.models.core import PlanProposal, WorldState
+from rescueflow.events.types import EventDraft
+from rescueflow.models.core import EventType, PlanProposal, ReportedBy, WorldState
 from rescueflow.planning import BaselinePlanner, DefaultPlanValidator, OptimizedPlanner
+from rescueflow.planning.solver_log import DEFAULT_SOLVER_LOG_PATH, SolverLog
 from rescueflow.scenario.loader import DefaultScenarioLoader, build_initial_world
-from rescueflow.sumo.controller import TraciSimulationController
+from rescueflow.sumo.controller import DEFAULT_STATE_PATH, TraciSimulationController
 from rescueflow.sumo.network_gen import generate_network, generate_routes, write_sumocfg
 from rescueflow.travel import SumoTravelTimeProvider
 
@@ -31,13 +33,18 @@ ROUTES_PATH = "simulation/network/city.rou.xml"
 SUMOCFG_PATH = "simulation/network/city.sumocfg"
 SCENARIO_FIXTURE = "simulation/scenario/scenario_v1.json"
 WORLD_STATE_PATH = "simulation/state/world.json"
+SIM_EVENT_LOG_PATH = "simulation/state/sim_event_log.jsonl"
+GREEN_WAVE_FLAG_PATH = "simulation/state/green_wave.json"
 
 
-def _travel() -> SumoTravelTimeProvider:
+def _travel(world: WorldState | None = None) -> SumoTravelTimeProvider:
     if not Path(NET_PATH).exists():
         click.echo(f"Network file {NET_PATH!r} not found. Run 'rescueflow sumo setup' first.", err=True)
         sys.exit(1)
-    return SumoTravelTimeProvider(NET_PATH)
+    provider = SumoTravelTimeProvider(NET_PATH)
+    if world is not None:
+        provider.set_closed_edges(world.closed_edges)
+    return provider
 
 
 def _load_world(path: str) -> WorldState:
@@ -49,6 +56,25 @@ def _load_world(path: str) -> WorldState:
 
 def _save_world(world: WorldState, path: str) -> None:
     DefaultScenarioLoader().save(world, path)
+
+
+def _controller() -> TraciSimulationController:
+    return TraciSimulationController(SUMOCFG_PATH, NET_PATH, state_path=DEFAULT_STATE_PATH)
+
+
+def _append_jsonl(path: str, records: list[dict]) -> None:
+    if not records:
+        return
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, default=str) + "\n")
+
+
+def _green_wave_enabled() -> bool:
+    if not Path(GREEN_WAVE_FLAG_PATH).exists():
+        return True
+    return json.loads(Path(GREEN_WAVE_FLAG_PATH).read_text(encoding="utf-8")).get("enabled", True)
 
 
 @click.group()
@@ -137,7 +163,7 @@ def sumo_smoke(duration: int) -> None:
     if not Path(SUMOCFG_PATH).exists():
         click.echo(f"{SUMOCFG_PATH!r} not found. Run 'rescueflow sumo setup' first.", err=True)
         sys.exit(1)
-    controller = TraciSimulationController(SUMOCFG_PATH)
+    controller = TraciSimulationController(SUMOCFG_PATH, NET_PATH)
     result = controller.run_smoke(duration_s=duration)
     click.echo(f"SUMO version: {result.sumo_version}")
     click.echo(f"Wall time: {result.duration_wall_ms:.1f} ms; simulated time elapsed: {result.sim_time_elapsed_s:.1f} s")
@@ -195,27 +221,29 @@ def _print_proposal(proposal: PlanProposal) -> None:
 @plan.command("b0")
 @click.option("--state", default=WORLD_STATE_PATH, show_default=True)
 @click.option("--out", default="simulation/state/proposal_b0.json", show_default=True)
-def plan_b0(state: str, out: str) -> None:
+@click.option("--budget-s", default=2.0, show_default=True, help="Hard wall-clock solve budget.")
+def plan_b0(state: str, out: str, budget_s: float) -> None:
     """Compute the B0 (greedy baseline) repair proposal."""
     world = _load_world(state)
-    travel = _travel()
-    planner = BaselinePlanner(travel)
+    travel = _travel(world)
+    planner = BaselinePlanner(travel, solver_log=SolverLog(), solve_budget_s=budget_s)
     proposal = planner.baseline_repair(world, event=world.events[-1] if world.events else None)
     _print_proposal(proposal)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(proposal.model_dump_json(indent=2), encoding="utf-8")
-    click.echo(f"Saved to {out}")
+    click.echo(f"Saved to {out}; solver log: {DEFAULT_SOLVER_LOG_PATH}")
 
 
 @plan.command("a1")
 @click.option("--state", default=WORLD_STATE_PATH, show_default=True)
 @click.option("--profiles", default="urgent_first,minimum_disruption", show_default=True)
 @click.option("--out-dir", default="simulation/state", show_default=True)
-def plan_a1(state: str, profiles: str, out_dir: str) -> None:
+@click.option("--budget-s", default=3.0, show_default=True, help="Hard wall-clock solve budget, per profile.")
+def plan_a1(state: str, profiles: str, out_dir: str, budget_s: float) -> None:
     """Compute A1 (fleet-wide optimizer) repair proposals, one per profile."""
     world = _load_world(state)
-    travel = _travel()
-    planner = OptimizedPlanner(travel)
+    travel = _travel(world)
+    planner = OptimizedPlanner(travel, solver_log=SolverLog(), solve_budget_s=budget_s)
     profile_list = [p.strip() for p in profiles.split(",") if p.strip()]
     proposals = planner.optimized_repair(world, event=world.events[-1] if world.events else None, profiles=profile_list)
     for proposal in proposals:
@@ -223,7 +251,7 @@ def plan_a1(state: str, profiles: str, out_dir: str) -> None:
         out_path = Path(out_dir) / f"proposal_a1_{proposal.profile}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(proposal.model_dump_json(indent=2), encoding="utf-8")
-        click.echo(f"Saved to {out_path}")
+        click.echo(f"Saved to {out_path}; solver log: {DEFAULT_SOLVER_LOG_PATH}")
 
 
 @plan.command("approve")
@@ -248,8 +276,255 @@ def plan_approve(state: str, proposal_path: str, approved_by: str, idempotency_k
             f"  [MOCK DISPATCH] unit={msg.unit_id} task={msg.task_id} dest={msg.destination_label} "
             f"status={msg.delivery_status} plan_version={msg.plan_version}"
         )
+
+    controller = _controller()
+    if controller.has_saved_state():
+        touched_vehicle_ids = [vp.vehicle_id for vp in proposal.vehicle_plans]
+        click.echo(f"Live SUMO session detected -- rerouting {touched_vehicle_ids} in the running simulation...")
+        controller.apply_committed_plan(world, touched_vehicle_ids)
+        _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+        click.echo("Live vehicles rerouted.")
+
     _save_world(world, state)
     click.echo(f"Saved updated world to {state}")
+
+
+# ---------------------------------------------------------------------------
+# Purely world-level disruption events (never touch SUMO -- see
+# `sim breakdown` / `sim closure` below for the two event types that have a
+# genuine physical manifestation in the live simulation).
+# ---------------------------------------------------------------------------
+
+
+def _apply_structured_event(state: str, draft: EventDraft) -> None:
+    world = _load_world(state)
+    interpreter = RuleBasedEventInterpreter()
+    validated = interpreter.validate_event(draft, world)
+    if isinstance(validated, ValidationError):
+        click.echo(f"Event rejected ({validated.code}): {validated.message}", err=True)
+        sys.exit(1)
+    apply_event(world, validated)
+    _save_world(world, state)
+    click.echo(f"Applied {validated.event.type.value} (event_id={validated.event.event_id})")
+    click.echo(f"Impact: {validated.event.impact_summary}")
+    click.echo(f"plan_revision is now {world.plan_revision}")
+
+
+@event.command("delay")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--vehicle", "vehicle_id", required=True)
+@click.option("--seconds", "delay_s", required=True, type=float)
+def event_delay(state: str, vehicle_id: str, delay_s: float) -> None:
+    """vehicle_delay: shift a vehicle's remaining (unlocked) stops later."""
+    world = _load_world(state)
+    draft = EventDraft(type=EventType.vehicle_delay, sim_time_s=world.sim_time_s, vehicle_id=vehicle_id,
+                        payload={"delay_s": delay_s}, reported_by=ReportedBy.crew)
+    _apply_structured_event(state, draft)
+
+
+@event.command("priority")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--task", "task_id", required=True)
+@click.option("--new-priority", required=True, type=click.Choice(["critical", "high", "routine"]))
+@click.option("--reason", required=True)
+def event_priority(state: str, task_id: str, new_priority: str, reason: str) -> None:
+    """priority_changed: e.g. a patient's condition worsened."""
+    world = _load_world(state)
+    draft = EventDraft(type=EventType.priority_changed, sim_time_s=world.sim_time_s, task_id=task_id,
+                        payload={"new_priority": new_priority, "reason": reason}, reported_by=ReportedBy.dispatcher)
+    _apply_structured_event(state, draft)
+
+
+@event.command("hospital-capacity")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--site", "site_id", required=True)
+@click.option("--slots", required=True, help='JSON list, e.g. \'[{"start_s":500,"end_s":900,"capacity":0}]\'')
+def event_hospital_capacity(state: str, site_id: str, slots: str) -> None:
+    """hospital_capacity_changed: replace a receiving site's capacity over a window."""
+    world = _load_world(state)
+    draft = EventDraft(type=EventType.hospital_capacity_changed, sim_time_s=world.sim_time_s,
+                        payload={"site_id": site_id, "slots": json.loads(slots)}, reported_by=ReportedBy.dispatcher)
+    _apply_structured_event(state, draft)
+
+
+@event.command("helicopter-grounded")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--vehicle", "vehicle_id", default="HELI_1", show_default=True)
+@click.option("--duration", "duration_s", default=3600.0, show_default=True, help="Grounding duration in simulated seconds.")
+@click.option("--cause", default="fog", show_default=True)
+def event_helicopter_grounded(state: str, vehicle_id: str, duration_s: float, cause: str) -> None:
+    """helicopter_grounded: e.g. fog, for `duration_s` simulated seconds
+    (auto-restores via WorldState.scheduled_restorations -- see `sim advance`)."""
+    world = _load_world(state)
+    draft = EventDraft(type=EventType.helicopter_grounded, sim_time_s=world.sim_time_s, vehicle_id=vehicle_id,
+                        payload={"end_s": world.sim_time_s + duration_s, "cause": cause}, reported_by=ReportedBy.dispatcher)
+    _apply_structured_event(state, draft)
+
+
+# ---------------------------------------------------------------------------
+# Live simulation: load/advance/inject-event/snapshot/toggle-green-wave/export-run
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def sim() -> None:
+    """Control the live, stepping SUMO simulation (docs/ARCHITECTURE.md).
+
+    Each command is a separate process; persistence across them uses
+    SUMO's own save-state/load-state (simulation/state/sumo.state.xml.gz),
+    not a long-lived Python process -- see the `rescueflow.sumo.controller`
+    module docstring."""
+
+
+@sim.command("load")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+def sim_load(state: str) -> None:
+    """Fresh start: spawns every ambulance that already has stops into a
+    brand-new SUMO session and saves its state for subsequent `sim`
+    commands. Helicopters are never injected into SUMO."""
+    world = _load_world(state)
+    controller = _controller()
+    controller.load_scenario(world)
+    _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+    _save_world(world, state)
+    click.echo(f"Live SUMO session started from {state}; state saved to {controller.state_path}")
+
+
+@sim.command("reset")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+def sim_reset(state: str) -> None:
+    """Deletes the live SUMO session's saved state and the sim event log,
+    and resets the world state back to the checked-in scenario fixture."""
+    _controller().reset()
+    Path(SIM_EVENT_LOG_PATH).unlink(missing_ok=True)
+    world = _load_world(SCENARIO_FIXTURE)
+    _save_world(world, state)
+    click.echo("Live session reset; world state reset to the initial scenario fixture.")
+
+
+@sim.command("advance")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--steps", default=10, show_default=True, help="Simulated seconds to advance (step-length is 1s).")
+def sim_advance(state: str, steps: int) -> None:
+    """Steps the live simulation forward, applying real pickup/dropoff
+    dwell completions, asset custody transfers, due scheduled restorations,
+    and green-wave signal priority as they occur."""
+    world = _load_world(state)
+    controller = _controller()
+    if not controller.has_saved_state():
+        click.echo("No live SUMO session. Run 'rescueflow sim load' first.", err=True)
+        sys.exit(1)
+    controller.green_wave.enabled = _green_wave_enabled()
+    controller.connect(resume=True, world=world)
+    snapshot = controller.step(world, n=steps)
+    controller.save_and_close()
+    _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+    _save_world(world, state)
+    click.echo(f"Advanced to sim_time_s={snapshot.sim_time_s:.1f} (telemetry_seq={snapshot.telemetry_seq})")
+    for vid, pos in snapshot.vehicle_positions.items():
+        click.echo(f"  {vid}: edge={pos['edge']} pos={pos['pos']:.1f}")
+    if controller.event_log:
+        click.echo(f"{len(controller.event_log)} event(s) logged to {SIM_EVENT_LOG_PATH}:")
+        for e in controller.event_log:
+            click.echo(f"  {e}")
+
+
+@sim.command("snapshot")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+def sim_snapshot(state: str) -> None:
+    """Read-only: prints real vehicle positions and task status from the
+    last `sim load`/`advance` (no SUMO connection needed)."""
+    world = _load_world(state)
+    click.echo(f"sim_time_s={world.sim_time_s:.1f} telemetry_seq={world.telemetry_seq} plan_revision={world.plan_revision}")
+    for v in world.vehicles.values():
+        if v.sumo_edge_id is not None:
+            click.echo(f"  {v.id}: edge={v.sumo_edge_id} pos={v.sumo_lane_position:.1f} status={v.status.value}")
+        else:
+            click.echo(f"  {v.id}: not live (node={v.node_id}) status={v.status.value}")
+    for t in world.tasks.values():
+        click.echo(f"  task {t.id}: status={t.status.value}")
+
+
+@sim.command("breakdown")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--vehicle", "vehicle_id", default="R2", show_default=True)
+@click.option("--text", default="Vozilo R2 je obstalo. Komplet K1 je ostal v vozilu.", show_default=True)
+def sim_breakdown(state: str, vehicle_id: str, text: str) -> None:
+    """Live vehicle_breakdown: physically freezes the vehicle at its real
+    live SUMO position *first*, then applies the normal validated event
+    using that real position as the recovery task's pickup node."""
+    world = _load_world(state)
+    controller = _controller()
+    if controller.has_saved_state():
+        real_node = controller.freeze_vehicle_and_locate(world, vehicle_id)
+        _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+        click.echo(f"Physically froze {vehicle_id} at real node {real_node}")
+    interpreter = RuleBasedEventInterpreter()
+    try:
+        draft = interpreter.parse(text, world.sim_time_s)
+    except EventParseError as exc:
+        click.echo("AI interpretation unavailable: " + str(exc), err=True)
+        sys.exit(1)
+    validated = interpreter.validate_event(draft, world)
+    if isinstance(validated, ValidationError):
+        click.echo(f"Event rejected ({validated.code}): {validated.message}", err=True)
+        sys.exit(1)
+    apply_event(world, validated)
+    _save_world(world, state)
+    click.echo(f"Applied {validated.event.type.value}; impact: {validated.event.impact_summary}")
+
+
+@sim.command("closure")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--edge", "edge_id", required=True)
+@click.option("--duration", "duration_s", default=None, type=float, help="Reopens automatically after this many seconds.")
+def sim_closure(state: str, edge_id: str, duration_s: float | None) -> None:
+    """Live road_closure: disallows the edge's lanes in the running SUMO
+    session (vehicles already on it are not ejected) and records the
+    closure in WorldState so both B0 and A1 detour around it identically."""
+    world = _load_world(state)
+    draft = EventDraft(type=EventType.road_closure, sim_time_s=world.sim_time_s,
+                        payload={"edge_id": edge_id, "duration_s": duration_s}, reported_by=ReportedBy.dispatcher)
+    interpreter = RuleBasedEventInterpreter()
+    validated = interpreter.validate_event(draft, world)
+    if isinstance(validated, ValidationError):
+        click.echo(f"Event rejected ({validated.code}): {validated.message}", err=True)
+        sys.exit(1)
+    apply_event(world, validated)
+    controller = _controller()
+    if controller.has_saved_state():
+        controller.apply_road_closure_physically(world, edge_id)
+        _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+    _save_world(world, state)
+    click.echo(f"Closed {edge_id}; impact: {validated.event.impact_summary}")
+
+
+@sim.command("toggle-green-wave")
+@click.option("--on/--off", "enabled", default=True)
+def sim_toggle_green_wave(enabled: bool) -> None:
+    """Enables/disables the green-wave controller for subsequent `sim advance` calls."""
+    Path(GREEN_WAVE_FLAG_PATH).parent.mkdir(parents=True, exist_ok=True)
+    Path(GREEN_WAVE_FLAG_PATH).write_text(json.dumps({"enabled": enabled}), encoding="utf-8")
+    click.echo(f"Green wave {'enabled' if enabled else 'disabled'}.")
+
+
+@sim.command("export-run")
+@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
+@click.option("--out", default="simulation/state/run_export.json", show_default=True)
+def sim_export_run(state: str, out: str) -> None:
+    """Bundles the current world state, the sim event log, and the solver
+    log into one JSON file for later inspection or attaching to a report."""
+    world = _load_world(state)
+    events = []
+    if Path(SIM_EVENT_LOG_PATH).exists():
+        events = [json.loads(line) for line in Path(SIM_EVENT_LOG_PATH).read_text(encoding="utf-8").splitlines() if line]
+    solver = []
+    if Path(DEFAULT_SOLVER_LOG_PATH).exists():
+        solver = [json.loads(line) for line in Path(DEFAULT_SOLVER_LOG_PATH).read_text(encoding="utf-8").splitlines() if line]
+    bundle = {"world": json.loads(world.model_dump_json()), "sim_events": events, "solver_log": solver}
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+    click.echo(f"Exported {len(events)} sim event(s) and {len(solver)} solver log entrie(s) to {out}")
 
 
 if __name__ == "__main__":

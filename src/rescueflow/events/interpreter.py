@@ -62,16 +62,15 @@ class RuleBasedEventInterpreter:
         )
 
     def validate_event(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
-        if draft.type == EventType.vehicle_breakdown:
-            return self._validate_breakdown(draft, world)
-        if draft.type == EventType.new_urgent_task:
-            return self._validate_new_urgent_task(draft, world)
-        return ValidationError(
-            code="not_implemented",
-            message=f"Event type {draft.type.value!r} has a typed data model but its execution "
-            "is planned for a later prompt (see docs/IMPLEMENTATION_STATUS.md).",
-            draft=draft,
-        )
+        validator = self._VALIDATORS.get(draft.type)
+        if validator is None:
+            return ValidationError(
+                code="not_implemented",
+                message=f"Event type {draft.type.value!r} has a typed data model but its execution "
+                "is planned for a later prompt (see docs/IMPLEMENTATION_STATUS.md).",
+                draft=draft,
+            )
+        return validator(self, draft, world)
 
     def _validate_breakdown(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
         if draft.vehicle_id is None or draft.vehicle_id not in world.vehicles:
@@ -141,6 +140,103 @@ class RuleBasedEventInterpreter:
         )
         return ValidatedEvent(event=event, draft=draft)
 
+    def _validate_road_closure(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        payload = draft.payload
+        edge_id = payload.get("edge_id")
+        if not edge_id:
+            return ValidationError(code="missing_fields", message="road_closure payload needs 'edge_id'", draft=draft)
+        if edge_id in world.closed_edges:
+            return ValidationError(code="already_closed", message=f"edge {edge_id!r} is already closed", draft=draft)
+        duration_s = payload.get("duration_s")
+        reopen_at_s = payload.get("reopen_at_s")
+        if duration_s is not None and reopen_at_s is not None:
+            return ValidationError(
+                code="ambiguous_duration", message="give at most one of duration_s/reopen_at_s", draft=draft
+            )
+        # Edge existence against the real SUMO network is checked where the
+        # closure is actually used (TravelTimeProvider / SimulationController),
+        # not here -- the event layer only knows WorldState, not the network
+        # graph. See docs/CONTRACTS.md "Event validation layering".
+        event = Event(
+            event_id=f"evt-road_closure-{edge_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload=payload, source_text=draft.source_text, reported_by=draft.reported_by,
+            received_by_dispatcher_at_s=world.sim_time_s, status="validated",
+            impact_summary=f"edge {edge_id} closed; both B0 and A1 will detour around it on their next replan",
+        )
+        return ValidatedEvent(event=event, draft=draft)
+
+    def _validate_vehicle_delay(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        if draft.vehicle_id is None or draft.vehicle_id not in world.vehicles:
+            return ValidationError(code="unknown_vehicle", message=f"vehicle {draft.vehicle_id!r} is not in the world state", draft=draft)
+        delay_s = draft.payload.get("delay_s")
+        if not isinstance(delay_s, (int, float)) or delay_s <= 0:
+            return ValidationError(code="invalid_delay", message="vehicle_delay payload needs a positive numeric 'delay_s'", draft=draft)
+        event = Event(
+            event_id=f"evt-vehicle_delay-{draft.vehicle_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload={"vehicle_id": draft.vehicle_id, "delay_s": delay_s},
+            source_text=draft.source_text, reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s,
+            status="validated", impact_summary=f"{draft.vehicle_id} delayed {delay_s}s; downstream stops shift",
+        )
+        return ValidatedEvent(event=event, draft=draft)
+
+    def _validate_priority_changed(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        if draft.task_id is None or draft.task_id not in world.tasks:
+            return ValidationError(code="unknown_task", message=f"task {draft.task_id!r} is not in the world state", draft=draft)
+        task = world.tasks[draft.task_id]
+        if task.status == TaskStatus.completed:
+            return ValidationError(code="task_already_completed", message="cannot change priority of a completed task", draft=draft)
+        new_priority = draft.payload.get("new_priority")
+        reason = draft.payload.get("reason")
+        if new_priority not in ("critical", "high", "routine"):
+            return ValidationError(code="invalid_priority", message=f"unknown priority {new_priority!r}", draft=draft)
+        if not reason:
+            return ValidationError(code="missing_reason", message="priority_changed requires a non-empty verified 'reason'", draft=draft)
+        event = Event(
+            event_id=f"evt-priority_changed-{draft.task_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload={"task_id": draft.task_id, "new_priority": new_priority, "reason": reason},
+            source_text=draft.source_text, reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s,
+            status="validated",
+            impact_summary=f"{draft.task_id} priority {task.priority.value} -> {new_priority} ({reason})",
+        )
+        return ValidatedEvent(event=event, draft=draft)
+
+    def _validate_hospital_capacity_changed(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        site_id = draft.payload.get("site_id")
+        if site_id not in world.receiving_sites:
+            return ValidationError(code="unknown_site", message=f"receiving site {site_id!r} is not in the world state", draft=draft)
+        slots = draft.payload.get("slots")
+        if not slots:
+            return ValidationError(code="missing_fields", message="hospital_capacity_changed payload needs non-empty 'slots'", draft=draft)
+        for slot in slots:
+            if not {"start_s", "end_s", "capacity"} <= slot.keys() or slot["start_s"] >= slot["end_s"] or slot["capacity"] < 0:
+                return ValidationError(code="invalid_slot", message=f"malformed capacity slot {slot!r}", draft=draft)
+        event = Event(
+            event_id=f"evt-hospital_capacity_changed-{site_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload={"site_id": site_id, "slots": slots}, source_text=draft.source_text,
+            reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s, status="validated",
+            impact_summary=f"{site_id} receiving capacity changed for {len(slots)} interval(s)",
+        )
+        return ValidatedEvent(event=event, draft=draft)
+
+    def _validate_helicopter_grounded(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        if draft.vehicle_id is None or draft.vehicle_id not in world.vehicles:
+            return ValidationError(code="unknown_vehicle", message=f"vehicle {draft.vehicle_id!r} is not in the world state", draft=draft)
+        vehicle = world.vehicles[draft.vehicle_id]
+        if vehicle.mode.value != "helicopter":
+            return ValidationError(code="not_a_helicopter", message=f"{draft.vehicle_id} is not a helicopter", draft=draft)
+        end_s = draft.payload.get("end_s")
+        cause = draft.payload.get("cause", "fog")
+        if not isinstance(end_s, (int, float)) or end_s <= draft.sim_time_s:
+            return ValidationError(code="invalid_window", message="helicopter_grounded needs 'end_s' after sim_time_s", draft=draft)
+        event = Event(
+            event_id=f"evt-helicopter_grounded-{draft.vehicle_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload={"vehicle_id": draft.vehicle_id, "end_s": end_s, "cause": cause},
+            source_text=draft.source_text, reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s,
+            status="validated",
+            impact_summary=f"{draft.vehicle_id} grounded by {cause} until {end_s}s",
+        )
+        return ValidatedEvent(event=event, draft=draft)
+
     @staticmethod
     def _affected_task_impacts(world: WorldState, vehicle_id: str) -> list[TaskImpact]:
         impacts = []
@@ -151,3 +247,14 @@ class RuleBasedEventInterpreter:
                 continue
             impacts.append(TaskImpact(task_id=task.id, impact="interrupted, requires replanning"))
         return impacts
+
+
+RuleBasedEventInterpreter._VALIDATORS = {
+    EventType.vehicle_breakdown: RuleBasedEventInterpreter._validate_breakdown,
+    EventType.new_urgent_task: RuleBasedEventInterpreter._validate_new_urgent_task,
+    EventType.road_closure: RuleBasedEventInterpreter._validate_road_closure,
+    EventType.vehicle_delay: RuleBasedEventInterpreter._validate_vehicle_delay,
+    EventType.priority_changed: RuleBasedEventInterpreter._validate_priority_changed,
+    EventType.hospital_capacity_changed: RuleBasedEventInterpreter._validate_hospital_capacity_changed,
+    EventType.helicopter_grounded: RuleBasedEventInterpreter._validate_helicopter_grounded,
+}

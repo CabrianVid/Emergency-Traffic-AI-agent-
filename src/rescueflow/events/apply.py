@@ -16,6 +16,8 @@ from rescueflow.events.types import ValidatedEvent
 from rescueflow.models.core import (
     AssetLocation,
     EventType,
+    ReceivingSlot,
+    ScheduledRestoration,
     Task,
     TaskKind,
     TaskPriority,
@@ -39,16 +41,38 @@ def apply_event(world: WorldState, validated: ValidatedEvent) -> None:
     NotImplementedError for event types whose typed model exists but whose
     execution is not implemented in prompt 1."""
     event = validated.event
-    if event.type == EventType.vehicle_breakdown:
-        _apply_vehicle_breakdown(world, event)
-    elif event.type == EventType.new_urgent_task:
-        _apply_new_urgent_task(world, event)
-    else:
+    handler = _HANDLERS.get(event.type)
+    if handler is None:
         raise NotImplementedError(
-            f"{event.type.value} has a typed model but no execution path in prompt 1"
+            f"{event.type.value} has a typed model but no execution path yet"
         )
+    handler(world, event)
     world.events.append(event)
     world.bump_plan_revision()
+
+
+def tick_scheduled_restorations(world: WorldState) -> list[ScheduledRestoration]:
+    """Called with every `world.sim_time_s` advance (by
+    `SimulationController.step` and by the CLI's `sim advance`): applies any
+    `ScheduledRestoration` whose time has arrived (e.g. HELI_1's 3600s fog
+    grounding expiring, or a timed road closure reopening) and bumps
+    `plan_revision` once if anything changed. Returns the restorations that
+    were just applied, for logging."""
+    applied: list[ScheduledRestoration] = []
+    for restoration in world.scheduled_restorations:
+        if restoration.applied or restoration.at_sim_s > world.sim_time_s:
+            continue
+        if restoration.kind == "vehicle_status":
+            vehicle = world.vehicles.get(restoration.target_id)
+            if vehicle is not None and restoration.restore_value is not None:
+                vehicle.status = VehicleStatus(restoration.restore_value)
+        elif restoration.kind == "edge_reopen":
+            world.closed_edges.pop(restoration.target_id, None)
+        restoration.applied = True
+        applied.append(restoration)
+    if applied:
+        world.bump_plan_revision()
+    return applied
 
 
 def _apply_vehicle_breakdown(world: WorldState, event) -> None:
@@ -135,3 +159,79 @@ def _apply_new_urgent_task(world: WorldState, event) -> None:
         status=TaskStatus.pending,
     )
     world.tasks[task.id] = task
+
+
+def _apply_road_closure(world: WorldState, event) -> None:
+    payload = event.payload
+    edge_id = payload["edge_id"]
+    duration_s = payload.get("duration_s")
+    reopen_at_s = payload.get("reopen_at_s")
+    if reopen_at_s is None and duration_s is not None:
+        reopen_at_s = world.sim_time_s + duration_s
+    world.closed_edges[edge_id] = reopen_at_s
+    if reopen_at_s is not None:
+        world.scheduled_restorations.append(
+            ScheduledRestoration(kind="edge_reopen", at_sim_s=reopen_at_s, target_id=edge_id)
+        )
+    # Any tasks whose *unstarted* stops route through the closed edge are
+    # left for the next planner call to detour around -- `TravelTimeProvider`
+    # (once `set_closed_edges` is called with the updated world) will raise
+    # on a path that has no open alternative, which the planner's insertion
+    # search already treats as "no feasible candidate", never a crash.
+
+
+def _apply_vehicle_delay(world: WorldState, event) -> None:
+    payload = event.payload
+    vehicle = world.vehicles[payload["vehicle_id"]]
+    delay_s = float(payload["delay_s"])
+    vehicle.available_after_s += delay_s
+    start = 0 if vehicle.locked_stop_index is None else vehicle.locked_stop_index + 1
+    for stop in vehicle.route_stops[start:]:
+        if stop.arrival_s is not None:
+            stop.arrival_s += delay_s
+        if stop.service_start_s is not None:
+            stop.service_start_s += delay_s
+        if stop.departure_s is not None:
+            stop.departure_s += delay_s
+
+
+def _apply_priority_changed(world: WorldState, event) -> None:
+    payload = event.payload
+    task = world.tasks[payload["task_id"]]
+    task.priority = TaskPriority(payload["new_priority"])
+
+
+def _apply_hospital_capacity_changed(world: WorldState, event) -> None:
+    payload = event.payload
+    site = world.receiving_sites[payload["site_id"]]
+    new_slots = [ReceivingSlot(**s) for s in payload["slots"]]
+    # Replace only the slots overlapping the affected window; untouched
+    # historical/unaffected capacity elsewhere on the site is left alone.
+    window_start = min(s.start_s for s in new_slots)
+    window_end = max(s.end_s for s in new_slots)
+    kept = [s for s in site.slots if s.end_s <= window_start or s.start_s >= window_end]
+    site.slots = sorted(kept + new_slots, key=lambda s: s.start_s)
+
+
+def _apply_helicopter_grounded(world: WorldState, event) -> None:
+    payload = event.payload
+    vehicle = world.vehicles[payload["vehicle_id"]]
+    vehicle.status = VehicleStatus.weather_grounded
+    end_s = float(payload["end_s"])
+    world.scheduled_restorations.append(
+        ScheduledRestoration(
+            kind="vehicle_status", at_sim_s=end_s, target_id=vehicle.id,
+            restore_value=VehicleStatus.available.value,
+        )
+    )
+
+
+_HANDLERS = {
+    EventType.vehicle_breakdown: _apply_vehicle_breakdown,
+    EventType.new_urgent_task: _apply_new_urgent_task,
+    EventType.road_closure: _apply_road_closure,
+    EventType.vehicle_delay: _apply_vehicle_delay,
+    EventType.priority_changed: _apply_priority_changed,
+    EventType.hospital_capacity_changed: _apply_hospital_capacity_changed,
+    EventType.helicopter_grounded: _apply_helicopter_grounded,
+}

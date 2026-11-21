@@ -22,6 +22,7 @@ operator can see they agree):
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from rescueflow.interfaces.protocols import TravelTimeProvider
@@ -39,11 +40,13 @@ from rescueflow.models.core import (
 )
 from rescueflow.planning.insertion import greedy_insert_all, is_vehicle_eligible, try_insert
 from rescueflow.planning.scoring import compute_score
+from rescueflow.planning.solver_log import SolverLog
 from rescueflow.planning.validator import DefaultPlanValidator, merged_vehicle_stops
 
 _PRIORITY_RANK = {TaskPriority.critical: 0, TaskPriority.high: 1, TaskPriority.routine: 2}
 
 LOCAL_SEARCH_MAX_PASSES = 2
+DEFAULT_SOLVE_BUDGET_S = 3.0
 
 
 _NON_MOVABLE_STATUSES = (
@@ -99,13 +102,19 @@ def _local_search(
     validator: DefaultPlanValidator,
     working_vehicles: dict[str, Vehicle],
     movable_tasks: list[Task],
+    deadline_monotonic: float | None = None,
 ) -> None:
     """Bounded relocate/swap pass: for each movable task currently placed,
     try moving it to a different vehicle; keep the move only if the
-    resulting per-vehicle schedule is feasible and no more costly."""
+    resulting per-vehicle schedule is feasible and no more costly. Respects
+    the same hard wall-clock solve budget as the insertion phase."""
     for _pass in range(LOCAL_SEARCH_MAX_PASSES):
+        if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+            break
         improved = False
         for task in movable_tasks:
+            if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+                break
             current_vid = next(
                 (vid for vid, v in working_vehicles.items() if any(s.task_id == task.id for s in v.route_stops)),
                 None,
@@ -153,9 +162,17 @@ def current_added_cost(working_vehicles: dict[str, Vehicle], vehicle_id: str, ta
 class OptimizedPlanner:
     """Concrete `Planner.optimized_repair`."""
 
-    def __init__(self, travel: TravelTimeProvider, validator: DefaultPlanValidator | None = None) -> None:
+    def __init__(
+        self,
+        travel: TravelTimeProvider,
+        validator: DefaultPlanValidator | None = None,
+        solver_log: SolverLog | None = None,
+        solve_budget_s: float = DEFAULT_SOLVE_BUDGET_S,
+    ) -> None:
         self.travel = travel
         self.validator = validator or DefaultPlanValidator()
+        self.solver_log = solver_log
+        self.solve_budget_s = solve_budget_s
 
     def optimized_repair(
         self, world: WorldState, event: Event | None, profiles: list[str]
@@ -166,17 +183,21 @@ class OptimizedPlanner:
         proposals: list[PlanProposal] = []
         seen_signatures: set[tuple] = set()
         for profile in profiles:
+            deadline = time.monotonic() + self.solve_budget_s
             working_vehicles = _pull_movable_tasks(world, movable_ids)
             if profile == "urgent_first":
                 order = sorted(movable, key=_urgent_first_key)
             else:
                 order = sorted(movable, key=lambda t: t.created_at_s)
 
-            changed, unserved = greedy_insert_all(world, self.travel, self.validator, working_vehicles, order)
+            changed, unserved = greedy_insert_all(
+                world, self.travel, self.validator, working_vehicles, order,
+                deadline_monotonic=deadline, solver_log=self.solver_log, policy="a1", profile=profile,
+            )
 
             if profile == "minimum_disruption":
                 placed = [t for t in movable if t.id in changed]
-                _local_search(world, self.travel, self.validator, working_vehicles, placed)
+                _local_search(world, self.travel, self.validator, working_vehicles, placed, deadline_monotonic=deadline)
 
             vehicle_plans = [
                 VehiclePlan(vehicle_id=vid, stops=wv.route_stops)
@@ -210,5 +231,11 @@ class OptimizedPlanner:
                 proposal.explanation += " (identical outcome to another profile)"
             seen_signatures.add(signature)
             proposals.append(proposal)
+
+            if self.solver_log is not None:
+                self.solver_log.plan_selected(
+                    proposal.proposal_id, "a1", profile, proposal.score.model_dump(),
+                    eta_assumption="static free-flow shortest path on the SUMO network graph (docs/DECISIONS.md)",
+                )
 
         return proposals
