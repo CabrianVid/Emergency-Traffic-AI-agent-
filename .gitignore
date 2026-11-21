@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Secrets -- never commit real keys.
+.env
+
+# Generated simulation artifacts (reproducible deterministically from the
+# CLI -- see docs/RUNBOOK.md -- rather than checked in as source).
+simulation/network/*.xml
+simulation/network/*.sumocfg
+simulation/state/
+*.sumo-output.xml
+*.tripinfo.xml
+
+# The exported scenario fixture (simulation/scenario/scenario_v1.json) IS
+# checked in: it is small, stable, and is the "initial plan" every CLI
+# command and test starts from.
+
+# Editor/OS noise
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
