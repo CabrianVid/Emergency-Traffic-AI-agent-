@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<viewsettings>
+    <scheme name="RescueFlow Ljubljana">
+        <background backgroundColor="230,234,227" showGrid="false"/>
+        <edges laneEdgeMode="0" laneShowBorders="true" showLinkRules="true"
+               showLinkDecals="true" realisticLinkRules="false" showDirection="false">
+            <colorScheme name="uniform">
+                <entry name="road" color="46,54,60"/>
+                <entry name="no passenger" color="115,118,112"/>
+            </colorScheme>
+        </edges>
+        <junctions drawShape="true" drawCrossingsAndWalkingareas="true">
+            <colorScheme name="uniform">
+                <entry name="" color="46,54,60"/>
+            </colorScheme>
+        </junctions>
+        <vehicles vehicleMode="0" vehicleQuality="3" vehicle_exaggeration="1.75"/>
+        <pois poiDetail="32" poiTextParam="label" poiText_show="true" poiText_constantSize="true"
+              poiText_size="57" poiText_color="255,255,255" poiText_bgColor="23,40,52,235"/>
+    </scheme>
+    <viewport x="972" y="192" zoom="312"/>
+    <delay value="115"/>
+</viewsettings>

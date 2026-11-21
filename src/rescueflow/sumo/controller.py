@@ -53,7 +53,7 @@ class TraciSimulationController:
     def __init__(
         self, sumocfg_path: str, net_path: str, state_path: str = DEFAULT_STATE_PATH,
         seed: int = 42, *, allow_teleport: bool = True,
-        observations_dir: Path | None = None, junction_stops: bool = False,
+        observations_dir: Path | None = None, junction_stops: bool = False, gui: bool = False,
     ) -> None:
         self.sumocfg_path = sumocfg_path
         self.net_path = net_path
@@ -62,6 +62,7 @@ class TraciSimulationController:
         self.allow_teleport = allow_teleport
         self.observations_dir = observations_dir
         self.junction_stops = junction_stops
+        self.gui = gui
         self.priority_probe_ids: set[str] = set()
         self._connected = False
         self._travel: SumoTravelTimeProvider | None = None
@@ -90,10 +91,17 @@ class TraciSimulationController:
         ensure_sumolib_importable()
         import traci  # noqa: PLC0415
 
+        binary = env.sumo_binary
+        if self.gui:
+            binary = binary.with_stem("sumo-gui")
+            if not binary.is_file():
+                raise RuntimeError(f"SUMO GUI is missing at {binary}. Install the SUMO desktop tools.")
         args = [
-            str(env.sumo_binary), "-c", self.sumocfg_path,
+            str(binary), "-c", self.sumocfg_path,
             "--no-step-log", "--duration-log.disable", "--seed", str(self.seed),
         ]
+        if self.gui:
+            args += ["--start", "--quit-on-end"]
         if resume and self.has_saved_state():
             args += ["--load-state", self.state_path]
         if not self.allow_teleport:
@@ -124,6 +132,22 @@ class TraciSimulationController:
         traci.simulation.saveState(self.state_path)
         traci.close()
         self._connected = False
+
+    def set_gui_label(self, poi_id: str, text: str) -> None:
+        """Update the text of a presentation marker in an open SUMO GUI."""
+        import traci
+
+        traci.poi.setParameter(poi_id, "label", text)
+
+    def place_gui_label_by_vehicle(self, poi_id: str, vehicle_id: str, offset: tuple[float, float]) -> None:
+        """Follow a live SUMO vehicle, moving the marker off-screen when absent."""
+        import traci
+
+        if vehicle_id in traci.vehicle.getIDList():
+            x, y = traci.vehicle.getPosition(vehicle_id)
+            traci.poi.setPosition(poi_id, x + offset[0], y + offset[1])
+        else:
+            traci.poi.setPosition(poi_id, -100, -100)
 
     def close(self) -> None:
         if not self._connected:

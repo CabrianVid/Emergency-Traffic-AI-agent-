@@ -29,6 +29,26 @@ _BACKGROUND_FLOWS = [
 ]
 
 
+def prepare_ljubljana_network(source: Path, net: Path) -> None:
+    """Build the shared Ljubljana road geometry from the bundled OSM extract."""
+    if not source.exists():
+        raise FileNotFoundError("Ljubljana OpenStreetMap road extract is missing.")
+    if net.exists() and net.stat().st_mtime >= source.stat().st_mtime:
+        return
+    env = ensure_sumolib_importable()
+    netconvert = env.netgenerate_binary.with_name(env.netgenerate_binary.name.replace("netgenerate", "netconvert"))
+    net.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            str(netconvert), "--osm-files", str(source), "--keep-edges.by-vclass", "passenger",
+            "--geometry.remove", "--tls.guess-signals", "--tls.yellow.time", "3",
+            "--tls.allred.time", "1", "--output.street-names", "true",
+            "--output-file", str(net), "--no-warnings", "true",
+        ],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+
+
 def generate_network(output_path: str, seed: int = 42) -> subprocess.CompletedProcess:
     from rescueflow.sumo.env import resolve_sumo_env
 

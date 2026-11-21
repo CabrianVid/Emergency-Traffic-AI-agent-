@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<polygonTypes>
+    <polygonType id="building" name="building" color="190,178,161" layer="-2" fill="force"/>
+    <polygonType id="building.hospital" name="hospital" color="204,193,174" layer="-2" fill="force"/>
+    <polygonType id="leisure.park" name="park" color="165,196,151" layer="-4" fill="force"/>
+    <polygonType id="leisure.garden" name="garden" color="175,201,159" layer="-4" fill="force"/>
+    <polygonType id="leisure.pitch" name="playing field" color="146,184,143" layer="-4" fill="force"/>
+    <polygonType id="landuse.grass" name="grass" color="181,204,162" layer="-4" fill="force"/>
+    <polygonType id="landuse.recreation_ground" name="green space" color="173,201,155" layer="-4" fill="force"/>
+    <polygonType id="landuse.forest" name="trees" color="153,188,146" layer="-4" fill="force"/>
+    <polygonType id="natural.wood" name="trees" color="153,188,146" layer="-4" fill="force"/>
+    <polygonType id="natural.water" name="water" color="112,176,199" layer="-3" fill="force"/>
+    <polygonType id="waterway.riverbank" name="river" color="112,176,199" layer="-3" fill="force"/>
+    <polygonType id="amenity.parking" name="parking" color="211,211,200" layer="-4"/>
+    <polygonType id="amenity.hospital" name="hospital grounds" color="221,217,200" layer="-5"/>
+</polygonTypes>

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
-from rescueflow.sumo.env import ensure_sumolib_importable
-from rescueflow.sumo.network_gen import generate_network, generate_routes, write_sumocfg
+from rescueflow.sumo.network_gen import generate_network, generate_routes, prepare_ljubljana_network, write_sumocfg
 
 LJUBLJANA_NODES = {
     "A0": "9561470276", "A1": "33377491", "A6": "9152085335",
@@ -30,21 +28,7 @@ def prepare_network(root: Path, network: str) -> tuple[Path, Path]:
             generate_network(str(net))
         generate_routes(str(net), str(routes), horizon_s=3600)
     else:
-        source = root / "scenario" / "ljubljana-roads.osm.gz"
-        if not source.exists():
-            raise FileNotFoundError("Ljubljana OpenStreetMap road extract is missing.")
-        if not net.exists() or net.stat().st_mtime < source.stat().st_mtime:
-            env = ensure_sumolib_importable()
-            subprocess.run(
-                [
-                    str(env.netgenerate_binary.with_name(env.netgenerate_binary.name.replace("netgenerate", "netconvert"))),
-                    "--osm-files", str(source), "--keep-edges.by-vclass", "passenger",
-                    "--geometry.remove", "--tls.guess-signals", "--tls.yellow.time", "3",
-                    "--tls.allred.time", "1", "--output.street-names", "true",
-                    "--output-file", str(net), "--no-warnings", "true",
-                ],
-                check=True, capture_output=True, text=True, timeout=60,
-            )
+        prepare_ljubljana_network(root / "scenario" / "ljubljana-roads.osm.gz", net)
         node = LJUBLJANA_NODES.__getitem__
         generate_routes(
             str(net), str(routes), amb_start_node=node("A0"), amb_dest_node=node("A1"),
