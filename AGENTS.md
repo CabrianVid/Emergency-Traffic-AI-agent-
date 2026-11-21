@@ -1,4 +1,4 @@
-# AGENTS.md -- onboarding for the next coding agent (prompt 4/4)
+# AGENTS.md -- RescueFlow handoff
 
 You are continuing work on RescueFlow AI, an AdaHack 2026 hackathon
 demonstration. **Before writing any code:**
@@ -7,7 +7,7 @@ demonstration. **Before writing any code:**
    source-of-truth design document. For prompt 4, start with sections
    10 (evaluation), 14 (verification), and 18 (build sequence).
 2. Read [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) --
-   exactly what prompts 1–3 built, known limitations, and
+   exactly what prompts 1–4 built, known limitations, and
    the recommended next prompt. Do not assume anything works until this
    file (or the actual code) says so.
 3. Read [docs/CONTRACTS.md](docs/CONTRACTS.md) -- the invariants every
@@ -55,11 +55,10 @@ demonstration. **Before writing any code:**
 - `docs/IMPLEMENTATION_STATUS.md` is the single place that must stay
   accurate after your change -- update it before you report done.
 
-## What's next
+## Reproduce the evaluation
 
-Build the reproducible Suite L/T/F evaluation and harden the live demo.
-Use independent SUMO processes, matched seeds, demand, incident times
-and operator delays. Review [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
-before changing the workstation. Its Results panel currently reports
-observations from individual manual replays. Keep those distinct from
-the benchmark CSVs and summary statistics planned for prompt 4.
+Read [EXPERIMENTS.md](docs/EXPERIMENTS.md) for matched Suite L and T commands
+and [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for presentation cues. Keep live
+session results distinct from the benchmark. Retain invalid run outputs
+and keep frozen inputs and blue-light physics identical in paired
+comparisons. The optional Suite F is outside this release.

@@ -157,11 +157,15 @@ def build_report(root: Path) -> None:
     write_csv(root / "summary.csv", summary)
     write_csv(root / "paired_differences.csv", paired, None if paired else ["suite", "scenario", "seed", "valid_pair"])
     write_csv(root / "effects.csv", effects, None if effects else ["suite", "scenario", "reference", "candidate"])
+    worker_failures = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((root / "runs").glob("*/*/*/*/worker_failure.json"))
+    ]
     document = {
         "label": "Synthetic SUMO simulation", "response_target_s": runs[0]["response_target_s"],
         "sumo_versions": sorted({run["sumo_version"] for run in runs}),
         "git_shas": sorted({run["git_sha"] for run in runs if run["git_sha"]}),
-        "run_count": len(runs), "invalid_runs": [
+        "run_count": len(runs) + len(worker_failures), "invalid_runs": worker_failures + [
             {key: run[key] for key in ("suite", "scenario", "policy", "seed", "failures")}
             for run in runs if not run["valid"]
         ],

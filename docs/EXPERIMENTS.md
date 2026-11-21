@@ -1,0 +1,121 @@
+# Synthetic SUMO experiments
+
+Evaluation uses the 7×7 training grid. The live workstation defaults
+to the OpenStreetMap-derived Ljubljana road map. Demand, calls, delays
+and receiving sites are synthetic in both settings.
+
+## Reproduce
+
+From the repository root in PowerShell, with SUMO 1.28 available:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e '.[dashboard,benchmark,dev]'
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite smoke --seeds 0:2 --output experiments/smoke --jobs 4
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite all --seeds 0:9 --jobs 8
+.\.venv\Scripts\python.exe -m rescueflow.benchmark report
+```
+
+Extend the standard matrix with the same seed-10 conditions used in
+the published evidence:
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite logistics --scenario urgent --seeds 10 --jobs 4
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite logistics --scenario closure --seeds 10 --jobs 4
+```
+
+Use `--suite logistics` or `--suite traffic` to run a single suite.
+`--scenario urgent` selects the emergency response condition.
+`--policies B0,A1` works for logistics; traffic always isolates B0/A2.
+Exit code 2 means at least one run failed an evaluation gate. The report
+is still emitted. Use a separate `--output` for a different matrix.
+
+## Matched policies and inputs
+
+| Policy | Dispatch and repair | Signals |
+|---|---|---|
+| B0 | Nearest immediately free eligible ambulance for new critical work. If all are committed, select the earliest feasible pickup after existing work. Greedy local insertion for other affected tasks. | Normal |
+| A1 | Fleet-wide urgent-first reinsertion on the same SUMO graph with locked stops preserved | Normal |
+| A2 | B0 dispatch and repair | Coordinated priority |
+| A3 | A1 dispatch and repair | Coordinated priority |
+
+Each condition and seed has a fixed initial schedule, backlog, fleet,
+and explicit per-vehicle departures, speed factors and edge lists.
+A separate RNG stream controls urgent location order. A manifest hashes
+the network, demand, configuration and initial state. Each policy
+verifies those hashes and starts an independent Python worker and SUMO
+process. All policies use the same vTypes and real SUMO blue-light
+devices for emergency vehicles. Logistics runs use 15s of modeled
+approval and 10s of modeled mobilization. Any additional junction
+clearance is recorded. Solver runtime is measured separately in wall
+milliseconds. Typed inputs keep the benchmark's LLM runtime field null.
+
+## Suite L
+
+1. **Breakdown.** R2 carries K1 and no patient. It breaks down at
+   151s. Recovery requires a different unit and a 180s transfer.
+   The dependent patient transfer is released only after K1 reaches
+   H1 custody.
+2. **Urgent calls.** Two ALS requests arrive at 151s and 181s while
+   scheduled work continues. R4 also has ALS in the benchmark fixture.
+3. **Closure.** A4A5 closes at 151s for 600s. It lies on a committed
+   ambulance route. The frozen civilian corridors bypass A4A5 throughout.
+
+The cutoff is 2,800 simulation seconds. Weighted tardiness sums
+observed lateness of completed deadline-bearing tasks with synthetic
+weights 10/4/1 for critical/high/routine. Read it alongside unserved
+counts. The on-time denominator includes unserved tasks that had a
+deadline. The interrupted original equipment task is replaced by its
+recovery task in the tally. An incomplete recovery can leave its
+dependent task unreleased and unserved.
+
+Emergency response runs from report to first observed pickup by an
+eligible ambulance, within 15m of the declared call node. Mean,
+median and nearest-rank P90 describe observed arrivals. The reach
+target is 300s and its denominator includes every emergency. Deltas
+compare the same scenario, seed and jointly reached call IDs in valid
+pairs. Positive seconds indicate savings. Relative savings require a
+positive reference. The report bootstraps paired seed differences
+only at 20 or more pairs with responses.
+
+## Suite T
+
+B0 and A2 use the same frozen urgent mission, blue-light vehicle and
+civilian trips. The two conditions are low-demand eastbound and
+peak-demand northbound. Emergency travel and waiting are observed in
+tripinfo. Civilian mean and P90 time loss use arrived civilian trips,
+then give equal weight to seeds. Unfinished includes trips that never
+entered and trips still in motion at cutoff. Logs include requests,
+restoration, phases shortened, seconds removed and simulator warnings.
+Conflict ranking is unit-tested. Both traffic conditions use a single
+emergency mission per run.
+
+## Audit and outputs
+
+- `experiments/inputs/<suite>/<condition>/<seed>/` contains the frozen
+  manifest, network, world and demand.
+- `experiments/runs/<suite>/<condition>/<seed>/<policy>/` contains
+  `metrics.json`, `events.jsonl`, `tasks.csv`, `vehicles.csv`,
+  `tripinfo.xml`, `routes.xml`, `warnings.log` and `process.log`.
+  Metrics record the benchmark code SHA and SUMO version.
+- `experiments/summary.csv`, `paired_differences.csv` and
+  `effects.csv` expose each condition and contrast. Figures are saved
+  under `experiments/charts/`. Invalid pairs remain in the paired CSV,
+  but are excluded from effects.
+- `experiments/benchmark.json` drives the dashboard Results panel
+  when present. `experiments/published/` contains the small measured
+  output bundle for a fresh checkout and a standalone recorded replay.
+
+Published figures include [response time](../experiments/published/charts/response.png),
+[logistics tardiness](../experiments/published/charts/logistics-tardiness.png),
+[unserved logistics tasks](../experiments/published/charts/logistics-unserved.png),
+[fixed-route ambulance travel](../experiments/published/charts/traffic-ambulance.png),
+and [civilian time loss](../experiments/published/charts/traffic-civilian.png).
+
+Hard constraint violations, skipped required stops, missing observed
+service, leaked priority requests, simulator failures, collisions,
+teleports and unreadable trip files are invalid. Artifacts are kept
+for audit. Unserved tasks and trips still in progress are also kept.
+SUMO can warn that a stop was skipped while an old route is being
+explicitly replaced. The audit records those warnings separately when
+tripinfo confirms both the removal and restart of that exact vehicle
+at the warning time. A real missing stop still fails its gate.

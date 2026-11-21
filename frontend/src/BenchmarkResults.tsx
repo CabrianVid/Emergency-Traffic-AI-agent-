@@ -21,6 +21,12 @@ type BenchmarkReport = {
 }
 const number = (value: number | null, suffix = '') => value == null ? '—' : `${value.toFixed(1)}${suffix}`
 const signed = (value: number | null, suffix = '') => value == null ? '—' : `${value > 0 ? '+' : ''}${number(value, suffix)}`
+const policyNames: Record<string, string> = {
+  B0: 'B0 · Baseline',
+  A1: 'A1 · Optimization',
+  A2: 'A2 · Signal priority',
+  A3: 'A3 · Combined',
+}
 
 export function BenchmarkResults() {
   const [report, setReport] = useState<BenchmarkReport | null>(null)
@@ -41,7 +47,7 @@ export function BenchmarkResults() {
       <thead><tr><th>Policy</th><th>Valid seeds</th><th>Mean</th><th>Median</th><th>P90</th><th>Within {report.response_target_s}s</th><th>Unserved</th></tr></thead>
       <tbody>{report.response.filter(row => row.scenario === 'urgent').sort((a, b) =>
         ['B0', 'A1', 'A2', 'A3'].indexOf(a.policy) - ['B0', 'A1', 'A2', 'A3'].indexOf(b.policy)).map(row =>
-        <tr key={row.policy}><th scope="row">{row.policy}</th><td>{row.valid_runs}</td>
+        <tr key={row.policy}><th scope="row">{policyNames[row.policy] ?? row.policy}</th><td>{row.valid_runs}</td>
           <td>{number(row.response_mean_s, ' s')}</td><td>{number(row.response_median_s, ' s')}</td>
           <td>{number(row.response_p90_s, ' s')}</td><td>{number(row.within_target_pct, '%')}</td>
           <td>{row.unserved_emergencies}/{row.emergencies}</td></tr>)}</tbody>

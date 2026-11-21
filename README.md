@@ -12,7 +12,7 @@ network imported from OpenStreetMap around Ljubljana's Tabor and UKC
 area. The fictional 7×7 training grid remains available. Traffic demand,
 receiving sites and crew messages are simulated.
 
-**Status:** prompt 3 of 4. The local console shows live SUMO telemetry,
+**Status:** final hackathon build. The local console shows live SUMO telemetry,
 validates crew reports, compares constrained schedules, and applies
 operator-approved routes. See
 [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for exactly
@@ -47,6 +47,19 @@ and the training grid both work offline after dependency installation.
 The console explicitly labels its rule-based interpretation when an
 OpenAI key is absent. See the [runbook](docs/RUNBOOK.md) for optional
 OpenAI setup and the API reference.
+
+## Run the evaluation
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e '.[dashboard,benchmark,dev]'
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite all --seeds 0:9 --jobs 4
+```
+
+The command writes raw SUMO observations, summaries and figures to
+`experiments/`. The Results panel separates matched benchmarks from
+the current session. For an offline demo, open the
+[recorded SUMO replay](experiments/published/replay.html). See
+[the experimental methods](docs/EXPERIMENTS.md).
 
 ## Quick start (Windows, PowerShell)
 

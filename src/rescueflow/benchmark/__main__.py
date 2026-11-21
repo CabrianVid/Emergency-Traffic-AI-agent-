@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from rescueflow.benchmark.inputs import LOGISTICS, POLICIES, TRAFFIC, prepare
+from rescueflow.benchmark.inputs import LOGISTICS, POLICIES, TRAFFIC, prepare, write_json
 from rescueflow.benchmark.runner import execute
 
 
@@ -35,13 +35,21 @@ def run_worker(item: tuple) -> tuple[str, bool]:
     if record:
         args.append("--record")
     result_file = output / "metrics.json"
+    failure_file = output / "worker_failure.json"
     result_file.unlink(missing_ok=True)
+    failure_file.unlink(missing_ok=True)
     with (output / "process.log").open("w", encoding="utf-8") as stream:
         result = subprocess.run(args, stdout=stream, stderr=subprocess.STDOUT)
     metrics = json.loads(result_file.read_text(encoding="utf-8")) if result_file.exists() else {}
     label = f"{output.parent.parent.parent.name}/{output.parent.parent.name}/{output.parent.name}/{policy}"
     if result.returncode or not metrics.get("valid"):
         reason = "; ".join(metrics.get("failures", [])) or "worker failed; see process.log"
+        if not metrics:
+            manifest = json.loads((inputs / "manifest.json").read_text(encoding="utf-8"))
+            write_json(failure_file, {
+                **{key: manifest[key] for key in ("suite", "scenario", "seed")},
+                "policy": policy, "failures": [reason], "exit_code": result.returncode,
+            })
         return f"{label}: {reason}", False
     return label, True
 

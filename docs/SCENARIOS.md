@@ -1,5 +1,11 @@
 # Scenarios
 
+The benchmark uses the grid fleet with R4 also qualified for ALS.
+Its conditions cover breakdown with a dependent transfer, urgent
+ALS calls and a timed road closure. The separate traffic suite uses
+fixed eastbound and northbound urgent missions. See
+[the frozen inputs and timings](EXPERIMENTS.md).
+
 ## The fixed initial scenario (`scenario.loader.build_initial_world`)
 
 Built once, validated for feasibility, and exported to the checked-in

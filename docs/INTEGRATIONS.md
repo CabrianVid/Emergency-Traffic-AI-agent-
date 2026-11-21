@@ -1,5 +1,12 @@
 # Integrations (SUMO/TraCI specifics)
 
+The benchmark disables automatic jam teleportation and writes raw SUMO
+tripinfo, route edge exit times and warnings. Ordered stop insertion
+preserves repeated visits to a road. The service loop checks SUMO's
+remaining-stop count and reports missing stops at termination.
+Benchmark stops use the approach near the junction, and the response KPI
+checks its actual coordinates.
+
 This file is the deep-dive on *how* RescueFlow talks to SUMO -- the
 mechanics behind docs/ARCHITECTURE.md's process model. If you are
 debugging a TraCI call or changing the execution loop, read this first.

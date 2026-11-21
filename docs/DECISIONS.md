@@ -1,4 +1,21 @@
-# Decisions and known simplifications (prompts 1-2)
+# Decisions and known simplifications
+
+## Final experiment decisions
+
+- Use the training grid for the evaluation and Ljubljana for the
+  presentation. The benchmark's emergency type equips the same
+  blue-light device in all policy runs.
+- Preserve scheduled stop order with TraCI's indexed insertion. A
+  smoke run showed that setting a stop by edge can move a repeat visit
+  to an earlier occurrence of that edge. Treat a missing stop as
+  missing, and count history for load without applying current
+  schedule timing comparisons to old observations.
+- Freeze civilian trips on open corridors in the closure condition.
+  Early smoke runs confirmed that SUMO will terminate when a
+  pre-scheduled civilian route enters an edge closed to that class.
+- Keep unreached emergencies in the 300s target and availability
+  counts. Compare response time among calls jointly reached, so
+  a policy cannot gain seconds merely by dropping hard-to-reach calls.
 
 Dated 2026-11-21. Each entry says what was chosen, why, and what the
 honest limitation is -- so a later prompt either accepts the tradeoff

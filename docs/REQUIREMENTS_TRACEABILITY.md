@@ -1,4 +1,15 @@
-# Requirements traceability (prompt 1)
+# Requirements traceability
+
+## Prompt 4
+
+| Requirement | Implementation and evidence |
+|---|---|
+| Reproduce a fair baseline, optimization and signal ablation | Frozen manifests and independent policy workers in `rescueflow.benchmark`; published condition and effect tables |
+| Physical K1 recovery and dependent work, urgent calls, route disruption | Suite L, per-run observed events and task outcomes |
+| Frozen urgent mission with civilian effects | Suite T tripinfo, signal audit and time-loss plots |
+| Live dispatcher report through approved routing | Dashboard and real SUMO integration test; walkthrough in [DEMO_SCRIPT.md](DEMO_SCRIPT.md) |
+| Ready-to-view offline fallback | Captured proof-of-run HTML at `experiments/published/replay.html` |
+| Optional integrated Suite F and repositioning | Deferred; see [known limitations](KNOWN_LIMITATIONS.md) |
 
 Maps each explicit requirement in the prompt 1 brief to where it is
 actually implemented and how it was verified. "Verified" means a command

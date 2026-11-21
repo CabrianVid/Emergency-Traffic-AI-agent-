@@ -46,12 +46,22 @@ FastAPI serves interactive schemas at [API docs](http://127.0.0.1:8000/docs).
 | POST `/api/plans/propose` | `{"profiles":["urgent_first","minimum_disruption","baseline"]}` |
 | POST `/api/plans/{id}/approve` | `{"expected_plan_revision":4,"idempotency_key":"demo-approval"}` |
 | GET `/api/notifications`, `/api/metrics` | Mock dispatch feed and latest measured run results |
+| GET `/api/benchmarks` | Generated benchmark report, with a measured bundled fallback |
 | WS `/ws` | Full snapshots on change, with HTTP polling fallback in the UI |
 
 The dashboard starts at a reproducible presentation checkpoint, 130s in
 Ljubljana and 151s on the grid. Simulated time pauses while the operator
 reviews schedules. A new event or observed change to a plan commitment
 can make an open proposal stale. Regenerate choices if that happens.
+
+## Benchmarks and offline replay
+
+Run `python -m rescueflow.benchmark run --suite smoke --output experiments/smoke` after installing
+the benchmark extra. See [EXPERIMENTS.md](EXPERIMENTS.md) for the full
+matrix. The console reads `experiments/benchmark.json` when present;
+`RESCUEFLOW_BENCHMARK` can point it to another report. Open
+`experiments/published/replay.html` directly to replay recorded SUMO
+frames and events without Python, Node or SUMO.
 
 ## Stage 2 CLI reference
 

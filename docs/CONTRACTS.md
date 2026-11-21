@@ -1,5 +1,13 @@
 # Contracts
 
+## Experiment invariants
+
+- Matched policy runs share the input hash, driver physics and delays.
+- Response deltas use jointly reached calls in matched, valid seeds.
+  Unserved calls remain in the availability and target denominators.
+- Route termination does not prove every stop was executed. The
+  controller observes service and records missing stops explicitly.
+
 ## Dispatcher API invariants
 
 - The server owns every proposal, event and snapshot. The browser

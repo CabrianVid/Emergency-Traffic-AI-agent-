@@ -1,5 +1,13 @@
 # Architecture
 
+## Experiments
+
+The runner freezes inputs per condition and seed, then launches a policy
+worker per cell. Each worker owns a fresh SUMO process via the existing
+controller and reuses planner and approval services. The report checks
+input hashes before pairing. The console reads the report from
+`GET /api/benchmarks` and live state through its existing WebSocket.
+
 ## Dispatcher workstation
 
 Vite serves the React application and proxies `/api` and `/ws` to

@@ -1,0 +1,15 @@
+suite,scenario,reference,candidate,label,matched_seeds,matched_calls,response_improvement_s,response_improvement_pct,ci_low_s,ci_high_s,mission_improvement_s,civilian_mean_improvement_s
+logistics,breakdown,B0,A1,Optimization,10,0,,,,,,0.0
+logistics,breakdown,B0,A2,Signal priority,10,0,,,,,,-9.522649026524274
+logistics,breakdown,A1,A3,Signal priority on optimized routes,10,0,,,,,,-9.522649026524274
+logistics,breakdown,B0,A3,Combined,10,0,,,,,,-9.522649026524274
+logistics,closure,B0,A1,Optimization,10,0,,,,,,0.0
+logistics,closure,B0,A2,Signal priority,10,0,,,,,,-19.28980265268872
+logistics,closure,A1,A3,Signal priority on optimized routes,10,0,,,,,,-19.28980265268872
+logistics,closure,B0,A3,Combined,10,0,,,,,,-19.28980265268872
+logistics,urgent,B0,A1,Optimization,9,18,382.7777777777777,28.128189426413552,,,,4.871945940643561
+logistics,urgent,B0,A2,Signal priority,10,20,1.75,0.12670600586467798,,,,-3.041372993857266
+logistics,urgent,A1,A3,Signal priority on optimized routes,9,18,3.3333333333333712,0.34081226924169655,,,,0.7173381313109688
+logistics,urgent,B0,A3,Combined,9,18,386.1111111111111,28.373137374974483,,,,5.58928407195453
+traffic,east-low,B0,A2,Signal priority,10,0,,,,,37.0,6.485296819981324
+traffic,north-peak,B0,A2,Signal priority,10,0,,,,,53.3,5.726016010575854

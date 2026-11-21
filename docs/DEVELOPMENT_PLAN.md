@@ -1,5 +1,11 @@
 # RescueFlow AI — AdaHack 2026 development plan (v3)
 
+**Implementation note, 2026-11-21.** The workstation defaults to
+Ljubljana and keeps the grid selectable. Suite L and T benchmarks use
+the grid with B0/A1/A2/A3 in logistics and B0/A2 in fixed-route traffic.
+Suite F, repositioning and OR-Tools are deferred. See
+[experimental methods](EXPERIMENTS.md) and [implementation status](IMPLEMENTATION_STATUS.md).
+
 **Status:** source-of-truth implementation specification, revised after practitioner interview  
 **Prepared:** 21 November 2026  
 **Challenge:** *Epilog — Izziv 3: AI-agenti za obvladovanje nepričakovanih dogodkov pri reševalnih prevozih*  

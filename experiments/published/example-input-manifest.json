@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "suite": "logistics",
+  "scenario": "urgent",
+  "seed": 0,
+  "network": "training-grid",
+  "horizon_s": 2800,
+  "civilian_departures": 193,
+  "approval_delay_s": 15,
+  "mobilization_delay_s": 10,
+  "response_target_s": 300,
+  "weights": {
+    "critical": 10,
+    "high": 4,
+    "routine": 1
+  },
+  "emergency_device": "SUMO bluelight",
+  "mission": null,
+  "civilian_route_exclusions": [],
+  "incidents": [
+    {
+      "time_s": 151,
+      "type": "new_urgent_task",
+      "payload": {
+        "task_id": "CALL-1",
+        "pickup_node": "C4",
+        "dropoff_node": "A6",
+        "priority": "critical",
+        "required_capabilities": [
+          "ALS"
+        ],
+        "latest_pickup_s": 451,
+        "latest_delivery_s": 1201
+      }
+    },
+    {
+      "time_s": 181,
+      "type": "new_urgent_task",
+      "payload": {
+        "task_id": "CALL-2",
+        "pickup_node": "F3",
+        "dropoff_node": "G0",
+        "priority": "critical",
+        "required_capabilities": [
+          "ALS"
+        ],
+        "latest_pickup_s": 481,
+        "latest_delivery_s": 1231
+      }
+    }
+  ],
+  "files": {
+    "grid.net.xml": "cb29524a9bce3465562f721c09b71638249357280c871282629fcdc5a8c9ae3c",
+    "frozen.rou.xml": "6aa9592ddb370f8d3a96621f2e9bd7b09a3377822c7d5d837c9a538174408381",
+    "run.sumocfg": "cb3307f8dfccd29c0af41f27a4e333d6a5ea363f5d50d21e4f79903927b5d954",
+    "world.json": "efc66ed74ef8187a6319e8ceed06c94a855601745119971578d5755ae4442a8c"
+  }
+}

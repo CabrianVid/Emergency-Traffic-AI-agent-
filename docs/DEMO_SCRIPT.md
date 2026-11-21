@@ -6,7 +6,22 @@ selected. The map uses SUMO’s OpenStreetMap-derived road network and
 simulated demand. A marker for an idle ambulance shows its assigned
 staging node. Moving markers come from TraCI.
 
-## Main walkthrough
+## Four-minute walkthrough
+
+| Time | Show |
+|---|---|
+| 0:00–0:35 | Initial Ljubljana routes, committed schedule and K1 aboard R2 |
+| 0:35–1:15 | Slovenian report, parser label and validated custody |
+| 1:15–1:55 | Alternative schedules, picking one and outgoing mock dispatch |
+| 1:55–3:05 | 30× playback, SUMO routes, priority restoration and K1 handover |
+| 3:05–3:55 | Matched Results, separate optimization/signal effects, civilian time loss |
+
+If live startup fails, open the [offline SUMO replay](../experiments/published/replay.html)
+and announce that it is a recording of one training-grid run. Play or
+scrub the captured frames. Follow the sequence of breakdown, approval,
+recovery, handover and dependent transfer in its event pane. Use the
+[experimental methods](EXPERIMENTS.md) and generated plots for the
+measured comparisons.
 
 1. Start paused. Point out R2 carrying kit K1, the active tasks and the
    committed timeline.
@@ -21,7 +36,9 @@ staging node. Moving markers come from TraCI.
    message for the kit recovery. Select **30×** and **Play**, or use the
    advance button when paused. Follow K1 from the roadside into a unit
    and then to H1 after its real transfer and receiving dwell.
-5. Pause and review **Results** and **Run activity**. Signal priority
+5. Pause and review **Results** and **Run activity**. The first group in
+   Results is the matched synthetic benchmark and feature comparison.
+   The current live session has its own section. Signal priority
    requests and restorations are logged. The results show the observed
    dispatch-to-pickup and late handovers, plus SUMO civilian time loss.
 6. Reset to replay. To populate both response-time rows, replay the same
