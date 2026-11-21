@@ -1,9 +1,12 @@
 # Implementation status -- prompt 2/4
 
 **Date:** 2026-11-21
-**Git commit:** see `git log --oneline` at handoff time; this file is
-updated in the same commit series it describes (prompt 2 checkpoints land
-after the prompt 1 commits `9c5296d`/`e3b42cb`/`73c0a5a`/`5d5b68c`).
+**Git commit:** `9a84a06` ("Add green-wave signal priority, emergency-
+driving fairness, and prompt-2 docs"), on top of `d02a834` (disruption
+events + solver hardening) and `27a6199` (live SUMO execution loop), after
+the prompt 1 commits `9c5296d`/`e3b42cb`/`73c0a5a`/`5d5b68c`. Run
+`git log --oneline` to confirm this is still the tip before trusting the
+rest of this file.
 **Environment:** same as prompt 1 (Windows 11, Python 3.13.9 via
 `--system-site-packages` venv, Eclipse SUMO 1.28.0, no outbound network
 access in this session).
