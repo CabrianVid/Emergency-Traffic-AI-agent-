@@ -69,9 +69,9 @@ Full command reference, expected output, and the full Demo A/B/C scripts:
 .\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
-42 tests, all passing as of this prompt (see
-docs/IMPLEMENTATION_STATUS.md for the exact run log and commit hash),
-including real (not skipped on this machine) SUMO execution tests.
+45 tests passed in the pre-prompt-3 review, including real SUMO execution
+tests. See [implementation status](docs/IMPLEMENTATION_STATUS.md) for
+verification details.
 
 ## Repository layout
 

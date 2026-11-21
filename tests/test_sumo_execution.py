@@ -124,6 +124,42 @@ def test_broken_vehicle_never_moves_again(tmp_path):
     assert abs(after_pos - before_pos) < 1.0, "a frozen (broken) vehicle must never move again once settled"
 
 
+@pytest.mark.parametrize(
+    ("report", "error"),
+    [
+        ("unrelated text", "AI interpretation unavailable"),
+        ("Vozilo V1 je obstalo. Komplet K1 je ostal v vozilu.", "asset_location_conflict"),
+        ("Vozilo R2 je obstalo.", "--vehicle must match"),
+    ],
+)
+def test_rejected_breakdown_leaves_saved_simulation_untouched(tmp_path, monkeypatch, report, error):
+    from click.testing import CliRunner
+
+    from rescueflow.cli import main
+
+    world = _one_task_world(tmp_path)
+    controller = _controller(tmp_path)
+    controller.load_scenario(world)
+    state_path = tmp_path / "world.json"
+    state_path.write_text(world.model_dump_json(), encoding="utf-8")
+    log_path = tmp_path / "sim_event_log.jsonl"
+    sumo_state_path = Path(controller.state_path)
+    original_sumo_state = sumo_state_path.read_bytes()
+    original_world_state = state_path.read_bytes()
+    monkeypatch.setattr(main, "_controller", lambda: controller)
+    monkeypatch.setattr(main, "SIM_EVENT_LOG_PATH", str(log_path))
+
+    result = CliRunner().invoke(
+        main.cli, ["sim", "breakdown", "--state", str(state_path), "--vehicle", "V1", "--text", report]
+    )
+
+    assert result.exit_code != 0
+    assert error in result.output
+    assert sumo_state_path.read_bytes() == original_sumo_state
+    assert state_path.read_bytes() == original_world_state
+    assert not log_path.exists()
+
+
 def test_live_road_closure_blocks_routing(tmp_path):
     world = _one_task_world(tmp_path, pickup="A1", dropoff="A3")
     controller = _controller(tmp_path)

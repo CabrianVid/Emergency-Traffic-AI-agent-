@@ -1,15 +1,35 @@
 # Implementation status -- prompt 2/4
 
 **Date:** 2026-11-21
-**Git commit:** `9a84a06` ("Add green-wave signal priority, emergency-
-driving fairness, and prompt-2 docs"), on top of `d02a834` (disruption
-events + solver hardening) and `27a6199` (live SUMO execution loop), after
-the prompt 1 commits `9c5296d`/`e3b42cb`/`73c0a5a`/`5d5b68c`. Run
-`git log --oneline` to confirm this is still the tip before trusting the
-rest of this file.
+**Reviewed baseline:** `a36108b` (restored the snapshot return from
+`step()`), after prompt 2's live SUMO loop (`27a6199`), disruption events
+and solver hardening (`d02a834`), and green-wave work (`9a84a06`).
 **Environment:** same as prompt 1 (Windows 11, Python 3.13.9 via
-`--system-site-packages` venv, Eclipse SUMO 1.28.0, no outbound network
-access in this session).
+`--system-site-packages` venv, Eclipse SUMO 1.28.0).
+
+## Pre-prompt-3 review
+
+- `sim breakdown` now parses and validates reports before opening or
+  changing a live SUMO session. If both `--vehicle` and `--text` are
+  supplied, their vehicle IDs must agree. A valid report still freezes the
+  vehicle at its observed position and uses that node for recovery.
+- `rescueflow doctor` passed. `pytest tests/ -v` passed all 45 cases,
+  including three new cases confirming that invalid text, conflicting
+  equipment custody, and mismatched vehicle IDs leave saved SUMO state,
+  world state, and the event log untouched.
+- The full CLI breakdown demo passed in an isolated SUMO 1.28.0 run.
+  B0 and both A1 profiles produced feasible proposals. The approved B0
+  plan issued mock dispatch messages. R1 completed a 180-second transfer
+  at A2 and delivered K1 to H1 (A6). The log recorded signal phase
+  shortening, priority passage, and restoration.
+- H1 receiving capacity is checked when validating proposals. During
+  live execution, an already committed stop can still complete inside a
+  zero-capacity window. An isolated run with capacity closed through
+  900s recorded T3's handover at 554s.
+- A1 can label plans with different routes and scores as "identical"
+  because its comparison uses only the sets of assigned and unserved
+  task IDs. This occurred for the two profiles in the live breakdown
+  demo.
 
 ## What prompt 2 actually delivers (and how it was verified)
 
@@ -97,7 +117,7 @@ docs/SCENARIOS.md. These are plain CLI commands today (as prompt 2 allows:
 FastAPI wrapper (prompt 3) can call the same underlying functions directly
 instead of shelling out to the CLI.
 
-## Test results
+## Prompt 2 test results before the review
 
 ```
 .\.venv\Scripts\python.exe -m pytest tests/ -v

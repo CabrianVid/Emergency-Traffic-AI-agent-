@@ -47,7 +47,7 @@ console script).
 | `sim reset [--state PATH]` | Deletes the live session's saved state + event log; resets world state to the checked-in fixture | yes |
 | `sim advance [--steps N]` | Steps the live simulation `N` simulated seconds; detects dwell completions, transfers custody, runs green-wave, ticks scheduled restorations | yes (always continues from wherever it left off) |
 | `sim snapshot [--state PATH]` | Read-only: prints real vehicle positions/task status from the last `load`/`advance` (no SUMO connection) | yes |
-| `sim breakdown [--vehicle R2] [--text "..."]` | Live `vehicle_breakdown`: physically freezes the vehicle at its **real** live position first, then applies the normal validated event using that position | **no** |
+| `sim breakdown [--vehicle R2] [--text "..."]` | Validates the breakdown report and checks that any explicit vehicle ID agrees with the report, then freezes that vehicle at its observed live position and applies the event | **no** |
 | `sim closure --edge ID [--duration S]` | Live `road_closure`: disallows the edge's lanes in the running session (vehicles already on it keep going) + records it in `WorldState` | **no** -- fails with `already_closed` on a repeat |
 | `sim toggle-green-wave --on\|--off` | Enables/disables the green-wave controller for subsequent `sim advance` calls | yes |
 | `sim export-run [--out PATH]` | Bundles the current world state + sim event log + solver log into one JSON file | yes |

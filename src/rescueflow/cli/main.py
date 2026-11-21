@@ -447,28 +447,36 @@ def sim_snapshot(state: str) -> None:
 
 @sim.command("breakdown")
 @click.option("--state", default=WORLD_STATE_PATH, show_default=True)
-@click.option("--vehicle", "vehicle_id", default="R2", show_default=True)
-@click.option("--text", default="Vozilo R2 je obstalo. Komplet K1 je ostal v vozilu.", show_default=True)
-def sim_breakdown(state: str, vehicle_id: str, text: str) -> None:
-    """Live vehicle_breakdown: physically freezes the vehicle at its real
-    live SUMO position *first*, then applies the normal validated event
-    using that real position as the recovery task's pickup node."""
+@click.option("--vehicle", "vehicle_id", help="Vehicle ID. Defaults to R2 when no report is supplied.")
+@click.option("--text", help="Optional breakdown report naming the vehicle and any stranded equipment.")
+def sim_breakdown(state: str, vehicle_id: str | None, text: str | None) -> None:
+    """Validate a breakdown report, freeze the named unit at its live
+    SUMO position, and apply the event using that recovery location."""
     world = _load_world(state)
-    controller = _controller()
-    if controller.has_saved_state():
-        real_node = controller.freeze_vehicle_and_locate(world, vehicle_id)
-        _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
-        click.echo(f"Physically froze {vehicle_id} at real node {real_node}")
+    if text is None:
+        vehicle_id = (vehicle_id or "R2").upper()
+        text = f"Vozilo {vehicle_id} je obstalo."
+        if vehicle_id == "R2":
+            text += " Komplet K1 je ostal v vozilu."
     interpreter = RuleBasedEventInterpreter()
     try:
         draft = interpreter.parse(text, world.sim_time_s)
     except EventParseError as exc:
         click.echo("AI interpretation unavailable: " + str(exc), err=True)
         sys.exit(1)
+    if vehicle_id is not None and vehicle_id.upper() != draft.vehicle_id:
+        raise click.UsageError("--vehicle must match the vehicle named in --text.")
     validated = interpreter.validate_event(draft, world)
     if isinstance(validated, ValidationError):
         click.echo(f"Event rejected ({validated.code}): {validated.message}", err=True)
         sys.exit(1)
+
+    controller = _controller()
+    if controller.has_saved_state():
+        affected_vehicle_id = validated.event.payload["vehicle_id"]
+        real_node = controller.freeze_vehicle_and_locate(world, affected_vehicle_id)
+        _append_jsonl(SIM_EVENT_LOG_PATH, controller.event_log)
+        click.echo(f"Physically froze {affected_vehicle_id} at real node {real_node}")
     apply_event(world, validated)
     _save_world(world, state)
     click.echo(f"Applied {validated.event.type.value}; impact: {validated.event.impact_summary}")
