@@ -11,6 +11,7 @@ B0 + signals). Automatic execution of the AI's first choice exists only here.
 
     python -m rescueflow.benchmark.montecarlo run --scenarios 100 --jobs 12
     python -m rescueflow.benchmark.montecarlo report
+    python -m rescueflow.benchmark.montecarlo replay --seed 12 --policy A2
 
 Runs are resumable: a finished run directory is never repeated.
 """
@@ -24,6 +25,7 @@ import os
 import random
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -55,7 +57,7 @@ class FallbackUsed(RuntimeError):
 
 
 class Run:
-    def __init__(self, folder: Path, output: Path, policy: str, agent: DecisionAgent | None) -> None:
+    def __init__(self, folder: Path, output: Path, policy: str, agent: DecisionAgent | None, gui: bool = False) -> None:
         self.manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
         net = folder.parents[1] / "grid.net.xml"
         for name, expected in self.manifest["files"].items():
@@ -66,13 +68,14 @@ class Run:
         self.travel = SumoTravelTimeProvider(str(net))
         self.controller = TraciSimulationController(
             str(folder / "run.sumocfg"), str(net), str(output / "unused.state.xml.gz"), self.manifest["seed"],
-            allow_teleport=False, observations_dir=output, junction_stops=True)
+            allow_teleport=False, observations_dir=output, junction_stops=True, gui=gui)
         self.controller.defer_junction_reroutes = True
         self.controller.green_wave.enabled = False
         self.events: list[dict] = []
         self.decisions: list[dict] = []
         self.reported: dict[str, float] = {}
         self.changed = 0
+        self.on_step = None
 
     def log(self, kind: str, **fields) -> None:
         self.events.append({"kind": kind, "sim_time_s": self.world.sim_time_s, **fields})
@@ -195,6 +198,8 @@ class Run:
                 due = [d for d in due if d > now]
                 self.dispatch()
             self.controller.step(self.world, capture_positions=False)
+            if self.on_step is not None:
+                self.on_step(self)
         for event in pending:
             self.log("event_never_applied", event=event)
 
@@ -341,6 +346,50 @@ def launch(root: Path, scenarios: range, policies: tuple[str, ...], jobs: int) -
                 break
 
 
+def replay(root: Path, seed: int, policy: str, *, gui: bool, delay_ms: int) -> int:
+    """Re-execute a recorded run from its frozen inputs and recorded AI answers.
+
+    The AI is never called: a decision that was not recorded stops the replay.
+    Afterwards the observed responses are compared with the recorded ones."""
+    recorded_path = root / "runs" / f"{seed:04d}" / policy / "metrics.json"
+    recorded = json.loads(recorded_path.read_text(encoding="utf-8"))
+    agent = DecisionAgent(cache_dir=root / "ai-cache", enabled=False) if policy in ("A1", "A2") else None
+    folder = prepare(root, seed)
+    print(f"Scenario {seed} {policy}: {recorded['density']} traffic, events {', '.join(recorded['event_types'])}", flush=True)
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="rescueflow-replay-") as temporary:
+        output = Path(temporary)
+        run = Run(folder, output, policy, agent, gui=gui)
+        shown = {"events": 0, "log": 0}
+
+        def narrate(current: Run) -> None:
+            if gui and delay_ms:
+                time.sleep(delay_ms / 1000)
+            for event in current.events[shown["events"]:]:
+                if event["kind"] == "event_applied":
+                    print(f"  {event['sim_time_s']:6.0f}s  EVENT {event['event']['type']}", flush=True)
+                elif event["kind"] == "plan_committed":
+                    print(f"  {event['sim_time_s']:6.0f}s  plan committed for {', '.join(event['units']) or 'no unit'}", flush=True)
+            shown["events"] = len(current.events)
+            for event in current.controller.event_log[shown["log"]:]:
+                if event["kind"] == "stop_begin" and str(event.get("task_id")).startswith("CALL-") and event["stop_kind"] == "pickup":
+                    print(f"  {event['sim_time_s']:6.0f}s  {event['vehicle_id']} reaches {event['task_id']}", flush=True)
+                elif event["kind"] == "phase_shortened":
+                    print(f"  {event['sim_time_s']:6.0f}s  signal {event['tls_id']} shortened for {event['vehicle_id']}", flush=True)
+            shown["log"] = len(current.controller.event_log)
+
+        run.on_step = narrate
+        try:
+            run.execute()
+        finally:
+            run.controller.close()
+        observed = run.metrics(output, failures)
+    same = observed["calls"] == recorded["calls"]
+    print("Replay reproduces the recorded responses." if same else
+          f"Replay DIFFERS from the record.\n  recorded {recorded['calls']}\n  replayed {observed['calls']}")
+    return 0 if same else 4
+
+
 # -- report --------------------------------------------------------------------
 
 
@@ -428,11 +477,18 @@ def main() -> None:
     one = sub.add_parser("worker")
     one.add_argument("--seed", type=int, required=True)
     one.add_argument("--policy", choices=ALL_POLICIES, required=True)
-    for item in (go, one, sub.add_parser("report")):
+    again = sub.add_parser("replay")
+    again.add_argument("--seed", type=int, required=True)
+    again.add_argument("--policy", choices=ALL_POLICIES, required=True)
+    again.add_argument("--headless", action="store_true")
+    again.add_argument("--delay", type=int, default=40, help="milliseconds per simulated second")
+    for item in (go, one, again, sub.add_parser("report")):
         item.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
     if args.command == "worker":
         sys.exit(worker(args.root, args.seed, args.policy))
+    if args.command == "replay":
+        sys.exit(replay(args.root, args.seed, args.policy, gui=not args.headless, delay_ms=args.delay))
     if args.command == "run":
         args.root.mkdir(parents=True, exist_ok=True)
         launch(args.root, range(args.scenarios), tuple(args.policies.split(",")), args.jobs)
