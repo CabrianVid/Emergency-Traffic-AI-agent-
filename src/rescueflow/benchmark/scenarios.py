@@ -85,13 +85,13 @@ def _events(rng: random.Random, nodes: list[str], hospitals: list[str], units: l
     return sorted(events, key=lambda e: (e["at"], e["type"], json.dumps(e, sort_keys=True)))
 
 
-def _world(rng: random.Random, travel, hospitals: list[str]) -> WorldState:
+def _world(rng: random.Random, travel, hospitals: list[str], nodes: list[str] = GRID) -> WorldState:
     world = WorldState(sim_time_s=0.0)
     for index, node in enumerate(hospitals, 1):
         world.receiving_sites[f"H{index}"] = ReceivingSite(
             id=f"H{index}", node_id=node, service_handling_s=60.0,
             accepted_task_kinds=list(TaskKind))
-    free = [n for n in GRID if n not in hospitals]
+    free = [n for n in nodes if n not in hospitals]
     starts = rng.sample(free, 6)
     als = set(rng.sample(range(6), rng.randint(2, 5)))
     for index, node in enumerate(starts):

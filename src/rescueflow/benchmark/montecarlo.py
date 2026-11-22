@@ -80,17 +80,25 @@ class Run:
     def __init__(self, folder: Path, output: Path, policy: str, agent: DecisionAgent | None, gui: bool = False,
                  engine: int | None = None) -> None:
         self.manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-        net = folder.parents[1] / "grid.net.xml"
+        net = folder.parents[1] / self.manifest.get("net_file", "grid.net.xml")
         for name, expected in self.manifest["files"].items():
             if digest(net if name == net.name else folder / name) != expected:
                 raise ValueError(f"Input changed: {name}")
         self.policy, self.agent = policy, agent
         self.engine = ENGINE if engine is None else engine
         self.world = WorldState.model_validate_json((folder / "world.json").read_bytes())
-        self.travel = SumoTravelTimeProvider(str(net))
+        city = self.manifest.get("network") == "ljubljana"
+        if city:
+            from rescueflow.travel.city_travel_time import CityTravelTimeProvider
+
+            self.travel = CityTravelTimeProvider(str(net))
+        else:
+            self.travel = SumoTravelTimeProvider(str(net))
         self.controller = TraciSimulationController(
             str(folder / "run.sumocfg"), str(net), str(output / "unused.state.xml.gz"), self.manifest["seed"],
-            allow_teleport=False, observations_dir=output, junction_stops=True, gui=gui)
+            allow_teleport=False, observations_dir=output, junction_stops=True, gui=gui,
+            **({"travel": self.travel} if city else {}),
+        )
         self.controller.defer_junction_reroutes = True
         self.controller.finish_service_first = self.controller.recover_stuck_units = self.engine >= 2
         self.controller.green_wave.enabled = False
