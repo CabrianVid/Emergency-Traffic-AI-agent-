@@ -252,3 +252,22 @@ by their estimated arrival windows.
 Alternatives with the same assigned task IDs can differ in vehicle,
 order, location or timing. Compare complete schedules and unserved
 tasks, ignoring generated proposal and stop IDs.
+
+# Simplified decision flow (2026-11-22)
+
+- **The optimizer proposes, the AI ranks, the dispatcher decides.** The AI answers
+  one multiple-choice question over validated options. Automatic approval exists
+  only in `benchmark/montecarlo.py`.
+- **Helicopter, hospital capacity, fog and idle repositioning removed** from the
+  active app. Enums stay so historical files load; those events are rejected.
+- **`unserved` is retriable.** It used to be final, so a call nobody could take
+  was never reconsidered. Planners now treat it like `pending`. The recorded B0
+  arm keeps the old behavior (`retry_unserved=False`) so replays still match.
+- **B1 added after the first results** to test the headline against a credible
+  queueing dispatcher. Reported next to B0; nothing was removed.
+- **Reroutes wait until a unit leaves a junction or a closed road**
+  (`defer_junction_reroutes`): SUMO cannot re-insert a vehicle there.
+- **Dashboard civilians detour around live closures** (`detour_civilians`). SUMO
+  aborts otherwise. The benchmark plans civilian routes around closures instead.
+- **Decisions API client sends `Accept-Encoding: gzip, deflate`** because the
+  installed Brotli decoder is incompatible with the HTTP client.

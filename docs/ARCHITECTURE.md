@@ -8,6 +8,21 @@ controller and reuses planner and approval services. The report checks
 input hashes before pairing. The console reads the report from
 `GET /api/benchmarks` and live state through its existing WebSocket.
 
+The Monte Carlo benchmark (`benchmark/scenarios.py`, `benchmark/montecarlo.py`)
+runs one worker process per scenario and policy against hashed frozen inputs.
+`GET /api/benchmarks/montecarlo` serves its published summary and
+`POST /api/benchmarks/montecarlo/replay` opens one recorded run in SUMO.
+
+## Decision system
+
+`decision/alternatives.py` runs the planners on detached copies and keeps up
+to three distinct feasible options with calculated metrics.
+`decision/agent.py` sends them as one `choice` question to the OpenAI Decisions
+API and orders them by the returned probabilities. Answers are cached by
+fingerprint, logged, time-limited and call-limited; any failure becomes a
+labeled deterministic ranking. The AI cannot create or change an option.
+`approval/service.py` stays the only way an option is committed.
+
 ## Dispatcher workstation
 
 Vite serves the React application and proxies `/api` and `/ws` to

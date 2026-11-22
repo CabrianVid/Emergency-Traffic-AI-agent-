@@ -100,7 +100,7 @@ py -3.13 -m venv --system-site-packages .venv
 # Real headless SUMO smoke run (genuine traci process, not a fake)
 .\.venv\Scripts\python.exe -m rescueflow.cli.main sumo smoke --duration 90
 
-# Build + validate the initial 5-ambulance/1-helicopter/7-task scenario
+# Build + validate the initial 5-ambulance/7-task scenario
 .\.venv\Scripts\python.exe -m rescueflow.cli.main scenario export
 
 # Spawn the fleet into a LIVE SUMO session and let it run

@@ -182,8 +182,6 @@ console script).
 | `plan approve --proposal PATH [--state PATH] [--approved-by NAME] [--idempotency-key KEY]` | Re-validates, commits assignments, logs mock dispatch messages, saves state; **if a live `sim` session exists, also reroutes the touched vehicles in it** | yes with the same `--idempotency-key` (defaults to the proposal's own id) |
 | `event delay --vehicle ID --seconds S` | `vehicle_delay`: shifts a vehicle's unlocked stops later | no (re-running adds another delay) |
 | `event priority --task ID --new-priority P --reason "..."` | `priority_changed` | no |
-| `event hospital-capacity --site ID --slots '[{"start_s":...,"end_s":...,"capacity":...}]'` | `hospital_capacity_changed` -- replaces any overlapping existing slot | no |
-| `event helicopter-grounded [--vehicle HELI_1] [--duration S] [--cause fog]` | `helicopter_grounded`; auto-restores via a scheduled restoration once the duration elapses (ticked by `sim advance`) | no |
 | `sim load [--state PATH]` | Fresh start: spawns every ambulance with stops into a brand-new live SUMO session, saves its state | **no** -- use `sim reset` first to start over |
 | `sim reset [--state PATH]` | Deletes the live session's saved state + event log; resets world state to the checked-in fixture | yes |
 | `sim advance [--steps N]` | Steps the live simulation `N` simulated seconds; detects dwell completions, transfers custody, runs green-wave, ticks scheduled restorations | yes (always continues from wherever it left off) |

@@ -1,64 +1,35 @@
 # RescueFlow dispatcher demo
 
-Start the backend and frontend using the [runbook](RUNBOOK.md). Open
-the console and leave **Ljubljana** and **R2 breakdown · K1 recovery**
-selected. The map uses SUMO’s OpenStreetMap-derived road network and
-simulated demand. A marker for an idle ambulance shows its assigned
-staging node. Moving markers come from TraCI.
+Start the backend and frontend using the [runbook](RUNBOOK.md). Open the
+console with **Ljubljana** selected. The road network comes from
+OpenStreetMap; facilities, demand and incidents are simulated. Moving
+markers come from TraCI.
 
 ## Four-minute walkthrough
 
-| Time | Show |
-|---|---|
-| 0:00–0:35 | Initial Ljubljana routes, committed schedule and K1 aboard R2 |
-| 0:35–1:15 | Slovenian report, parser label and validated custody |
-| 1:15–1:55 | Alternative schedules, picking one and outgoing mock dispatch |
-| 1:55–3:05 | 30× playback, SUMO routes, priority restoration and K1 handover |
-| 3:05–3:55 | Matched Results, separate optimization/signal effects, civilian time loss |
+1. **Start state.** Point out the fleet, tasks and R2 carrying kit K1.
+2. **Event.** Select **Use example**, **Interpret report**, then apply it;
+   or press **New emergency**. The simulation pauses.
+3. **Options.** Up to three feasible options appear, ranked. The badge says
+   whether the AI ranked them, only one option existed, or the labeled
+   deterministic fallback ranked them. Compare ETAs, changed routes,
+   warnings and equipment effects.
+4. **Decision.** Approve an option, reject all, or recalculate. Tick
+   **Authorize traffic-light priority** to allow a green wave for the listed
+   units. Point out the plan revision and mock crew messages.
+5. **Execution.** Play at 30×. Follow the unit on the map and the signal
+   requests and restorations in **Run activity**.
+6. **Other events.** Click a unit (breakdown, 2 min delay), a task (priority,
+   hospital) or a road (close 4 min), or request equipment.
+7. **Evidence.** Open **Results**. Read the paired differences and intervals,
+   including those that show no gain, then replay a recorded scenario.
+
+Say aloud that the benchmark is synthetic, that the dispatcher always decides
+in the dashboard, and what the results do *not* show
+([plain-English guide](SIMPLE_SYSTEM_EXPLANATION.md)).
 
 If live startup fails, open the [offline SUMO replay](../experiments/published/replay.html)
-and announce that it is a recording of one training-grid run. Play or
-scrub the captured frames. Follow the sequence of breakdown, approval,
-recovery, handover and dependent transfer in its event pane. Use the
-[experimental methods](EXPERIMENTS.md) and generated plots for the
-measured comparisons.
+and say that it is a recording of one older training-grid run.
 
-1. Start paused. Point out R2 carrying kit K1, the active tasks and the
-   committed timeline.
-2. Select **Use example**, then **Interpret report**. Review the parsed
-   vehicle and kit, the validation result, and the parser label. Select
-   **Apply incident and compute choices**. **Trigger scripted incident**
-   reaches the same validated event workflow directly.
-3. Review the selected card’s estimates and compare the dashed proposed
-   routes and lower timeline with the committed schedule. Select a
-   distinct card to see a different route and task order.
-4. Approve **Urgent first**. Look for the plan revision and the mock
-   message for the kit recovery. Select **30×** and **Play**, or use the
-   advance button when paused. Follow K1 from the roadside into a unit
-   and then to H1 after its real transfer and receiving dwell.
-5. Pause and review **Results** and **Run activity**. The first group in
-   Results is the matched synthetic benchmark and feature comparison.
-   The current live session has its own section. Signal priority
-   requests and restorations are logged. The results show the observed
-   dispatch-to-pickup and late handovers, plus SUMO civilian time loss.
-6. Reset to replay. To populate both response-time rows, replay the same
-   incident once with **Compute B0 only**, then again with **Compute A1
-   only**, approving each plan and advancing sufficiently for pickups.
-   The panel displays the latest observations from each policy for the
-   current network and scenario. It keeps these across run resets in one
-   server session. Formal matched benchmark suites are planned for
-   prompt 4.
-
-## Other scenarios
-
-- **New urgent patient** adds an urgent request through the
-  same planner. Select a road on the map to close that directed edge for
-  four simulated minutes through the validated closure control.
-- **Fog · receiving capacity** grounds HELI 1 for an hour and reduces
-  H1’s available handovers in a future receiving window. Helicopter ETAs
-  are analytical. The road network still drives ambulance ETAs and
-  movement. Use **Training grid** as the offline fallback network.
-
-If a position is inside a junction when you apply a breakdown or
-reroute, advance past the junction and try the action again. Regenerate
-its proposal if the world plan version changed.
+If a unit is inside a junction when you report a breakdown, advance a step
+and retry. Recalculate if the plan version changed.

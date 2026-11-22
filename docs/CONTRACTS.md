@@ -92,8 +92,7 @@ Each of these is one check in `planning/validator.py` and one test in
 | Patient/equipment capacity never exceeded | `_check_capacity_and_ordering` | (exercised indirectly) |
 | Asset physically at its claimed pickup location (no teleporting K1) | `_check_asset_custody` (`asset_not_at_pickup`) | `test_k1_cannot_be_delivered_before_recovery_and_custody_transfer` |
 | Locked/in-progress leg never reordered or removed | `_check_locked_prefix_unchanged` (`locked_stop_reassigned`) | `test_locked_carrying_patient_leg_cannot_be_reassigned` |
-| Hospital receiving-slot capacity | `_check_receiving_capacity` (`receiving_capacity_exceeded`) | `test_hospital_receiving_capacity_enforced` |
-| Broken/grounded vehicle gets no new stops | `_check_grounded_or_broken` (`unavailable_vehicle_assigned`) | `test_grounded_helicopter_cannot_receive_new_stops` |
+| Broken/grounded vehicle gets no new stops | `_check_grounded_or_broken` (`unavailable_vehicle_assigned`) | `test_broken_ambulance_cannot_receive_new_stops` |
 | Hard time windows | `_check_time_windows` (`hard_deadline_violated`) | (soft windows instead feed `ScoreBreakdown` lateness, see `planning/scoring.py`) |
 
 A subtlety worth preserving: the locked-prefix and broken/grounded checks

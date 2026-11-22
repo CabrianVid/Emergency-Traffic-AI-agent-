@@ -1,6 +1,10 @@
 # Scenarios
 
-The benchmark uses the grid fleet with R4 also qualified for ALS.
+The Monte Carlo benchmark generates its own frozen scenarios per seed
+(`benchmark/scenarios.py`): six ambulances, two to six emergencies, and a
+random mix of the seven event types. See [methods](EXPERIMENTS.md).
+
+The older benchmark uses the grid fleet with R4 also qualified for ALS.
 Its conditions cover breakdown with a dependent transfer, urgent
 ALS calls and a timed road closure. The separate traffic suite uses
 fixed eastbound and northbound urgent missions. See
@@ -15,8 +19,7 @@ write the file). All node IDs are real junction IDs in the generated 7x7
 SUMO grid (`simulation/network/city.net.xml`, 400m spacing, so they exist
 on the actual simulated road network, not invented coordinates).
 
-Fleet (5 ambulances + 1 abstract helicopter, matching the "at least five
-road ambulances and one abstract helicopter" requirement):
+Fleet (five ambulances):
 
 | Vehicle | Mode | Capabilities | Node | Status at scenario start |
 |---|---|---|---|---|
@@ -25,7 +28,6 @@ road ambulances and one abstract helicopter" requirement):
 | R3 | ambulance | BLS | D3 | **carrying** a critical patient (T2), locked in-progress leg |
 | R4 | ambulance | BLS | F5 | available |
 | R5 | ambulance | BLS | G5 | assigned to T5 (not yet started -- relocatable by A1, not by B0) |
-| HELI_1 | helicopter | ALS | D6 | available (unused by any task in this scenario; demonstrates the analytical 200km/h model is wired up, see `travel/sumo_travel_time.py`) |
 
 Two receiving sites: H1 (node A6) with a deliberately capacity-constrained
 window -- 3 slots for 0-500s, **0 slots for 500-900s**, 3 slots again after
@@ -90,25 +92,7 @@ real dwell detection, and green-wave priority requests/grants/timeouts are
 logged for the critical-priority legs (T2's carry, T6's response, and
 R1's K1-recovery leg) along the way.
 
-## Demo B: fog grounds HELI_1; H1 loses receiving capacity
-
-```powershell
-rescueflow event helicopter-grounded --vehicle HELI_1 --duration 3600 --cause fog
-rescueflow event hospital-capacity --site H1 --slots '[{"start_s":500,"end_s":900,"capacity":0}]'
-rescueflow scenario show   # HELI_1 now weather_grounded; H1 shows the new window
-rescueflow sim advance --steps 3700   # (if a live session is running) HELI_1 auto-restores to available
-```
-
-Both event types are now fully executed (typed + validated + applied),
-not just modeled: `HELI_1`'s status becomes `weather_grounded` and a
-`ScheduledRestoration` auto-returns it to `available` once `end_s`
-passes (`events.apply.tick_scheduled_restorations`, ticked by every `sim
-advance`); H1's receiving slots are replaced for the affected window, and
-`DefaultPlanValidator._check_receiving_capacity` already enforces it for
-any new proposal. See `tests/test_events_prompt2.py` for both paths
-covered without needing a live SUMO session.
-
-## Demo C: a live road closure
+## Demo B: a live road closure
 
 ```powershell
 rescueflow sim closure --edge A0A1 --duration 500

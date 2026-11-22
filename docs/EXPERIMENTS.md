@@ -1,5 +1,47 @@
 # Synthetic SUMO experiments
 
+## Monte Carlo benchmark (2026-11-22)
+
+1,000 seeded scenarios on the 7x7 grid: six ambulances, 2-6 emergencies,
+ongoing transports, and a random mix of breakdowns, delays, priority and
+destination changes, closures and equipment requests. World, routes, network
+and events are frozen and hashed; every policy replays the same inputs with a
+25 s approval and mobilization delay and the same blue-light physics.
+
+| Policy | Dispatch | Signals |
+|---|---|---|
+| B0 | Nearest free unit, live-traffic routing | Normal |
+| B1 | Central priority queue, re-dispatch when a unit frees up, divert unstarted routine work | Normal |
+| R1 | Same options as A1, deterministic rule picks, no AI | Normal |
+| A1 | Up to three feasible options, OpenAI Decisions API picks | Normal |
+| A2 | Same as A1 | Green-wave priority for critical legs |
+
+- **Metric, fixed before any run:** response from call to eligible arrival,
+  capped at 900 s; a call nobody reaches scores 900 s. Scenario mean, paired by
+  scenario, 95% bootstrap interval. Sensitivity: failed runs scored at the cap.
+- **B1 was added afterwards.** The audit of the first 4,000 runs showed B0 never
+  moves a waiting call to a unit that frees up. B0's results are unchanged.
+  B1 alone gets an extra dispatch trigger, with no decision delay there.
+- **AI runs may not use the fallback.** A failed AI call leaves no result and the
+  run is repeated. Cached answers are real earlier answers to identical input.
+- Seeds 0-99 were also the pilot. Between pilot and main run only two crash
+  fixes were made.
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo run --scenarios 1000 --policies B0,B1,R1,A1,A2 --jobs 12
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo report
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo export
+```
+
+Results: [plain-English guide](SIMPLE_SYSTEM_EXPLANATION.md#results). Data:
+`experiments/published/montecarlo-2026-11-22` (`summary.json`, `runs.csv`,
+`replay-data.zip`). The AI policies need `OPENAI_API_KEY`.
+
+## Older matched benchmark
+
+Policy names below are older: its A2 is B0 plus signals and its A3 is A1 plus
+signals. Its A1/A3 numbers predate a planner fix.
+
 Evaluation uses the 7×7 training grid. The live workstation defaults
 to the OpenStreetMap-derived Ljubljana road map. Demand, calls, delays
 and receiving sites are synthetic in both settings.
