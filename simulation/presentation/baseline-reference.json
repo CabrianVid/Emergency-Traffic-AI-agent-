@@ -1,0 +1,54 @@
+{
+  "inputs": "011f6d2ad7ee164e37116e7401eeacd1948f5c7e4699c74864a868275678ca1f",
+  "calls": {
+    "CALL-1": {
+      "place": "Šiška",
+      "response_s": 280.0,
+      "unit": "R3",
+      "at_ukc_s": 973.0
+    },
+    "CALL-2": {
+      "place": "Trnovo",
+      "response_s": 299.0,
+      "unit": "R1",
+      "at_ukc_s": 1129.0
+    },
+    "CALL-3": {
+      "place": "Štepanja vas",
+      "response_s": 350.0,
+      "unit": "R2",
+      "at_ukc_s": 1013.0
+    },
+    "CALL-4": {
+      "place": "Nove Jarše",
+      "response_s": 654.0,
+      "unit": "R5",
+      "at_ukc_s": 1356.0
+    },
+    "CALL-5": {
+      "place": "Tivoli",
+      "response_s": 368.0,
+      "unit": "R6",
+      "at_ukc_s": 1284.0
+    },
+    "CALL-6": {
+      "place": "Rakovnik",
+      "response_s": 865.0,
+      "unit": "R2",
+      "at_ukc_s": null
+    },
+    "CALL-7": {
+      "place": "BTC",
+      "response_s": 462.0,
+      "unit": "R8",
+      "at_ukc_s": 1565.0
+    },
+    "CALL-8": {
+      "place": "Center",
+      "response_s": 190.0,
+      "unit": "R9",
+      "at_ukc_s": 1513.0
+    }
+  },
+  "mean_response_s": 433.5
+}

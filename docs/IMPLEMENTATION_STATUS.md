@@ -44,7 +44,8 @@ Branch `simplify-decision-flow`. Plain-English guide with all results:
   at 1600x900 and 1366x768.
 - **AI partner flows:** expected times on every option, keep-the-plan option, reroute and
   traffic-light questions, patient transfer after a breakdown, 30 s reviews.
-- **Tests:** 81 pass (`pytest tests/ -q`), frontend builds. No automated test calls
+- **Side-by-side scene:** `presentation compare`; see DECISIONS for results and cause.
+- **Tests:** 84 pass (`pytest tests/ -q`), frontend builds. No automated test calls
   the real API; live ranking was checked by hand and by the benchmark.
 - **Measured:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
   dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking

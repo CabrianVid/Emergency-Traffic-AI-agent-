@@ -337,3 +337,18 @@ tasks, ignoring generated proposal and stop IDs.
   without the flag the task still escalates, as in the benchmark.
 - **Traffic-light permission covers one unit and one job** and ends with it. The question
   states the number of lights, not a time saved: the benchmark found no measurable saving.
+
+# Side-by-side scene (2026-11-22)
+
+- **The network is frozen** (`simulation/presentation/ljubljana-wide.net.xml.gz`).
+  netconvert did not build identical junctions every time, so earlier side-by-side runs
+  could use slightly different roads, and their numbers varied (baseline 7:37 to 7:48).
+- **`rescueflow` is now A4**, the dashboard's decision engine; A3 stays available. Both
+  policies use engine 2 physics and live traffic. 11 real AI answers are stored, so it
+  plays offline. Not tuned on this scene; it is one scene, not evidence.
+- **Result:** average response 7:14 baseline, 3:18 A4; 6 calls faster, 2 the same (within
+  10 s). One routine transfer late (baseline none).
+- **Cause, checked:** with the lights off it is 3:18 as well, and the fixed rule makes the same
+  11 choices as the AI. The gain is dispatch: which unit goes, fleet-wide re-planning and
+  deciding again when a unit frees up.
+- The comparison box uses the stored baseline run, only if its input digest matches.

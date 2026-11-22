@@ -45,8 +45,8 @@ policy at a time from the repository root:
 ```
 
 `baseline` is B0: the nearest immediately free ambulance and normal
-signals. `rescueflow` is A3: fleet-wide urgent-first re-planning (A1)
-plus green-wave signal priority. `A1` and `A2` isolate one upgrade each.
+signals. `rescueflow` is A4: the dashboard's decision engine plus green-wave
+signal priority. `A1`, `A2` and `A3` are older variants.
 Both runs use the same fleet, routine schedule, calls, civilian trips,
 blue-light physics and 25 s approval-plus-mobilization delay. Every call
 is planned by the real planner and committed through the real approval
@@ -54,7 +54,10 @@ service, so the units on screen move because a plan was approved.
 
 How to read the window:
 
-- **Left panel**: policy, legend, simulated clock, calls waiting and
+- **Orange box, The difference, live** (RescueFlow): every call against the
+  recorded baseline run. Green = ahead or faster, red = behind or slower.
+  **Orange or red squares on the map** frame a call while it differs.
+- **Strip below the map**: policy, legend, simulated clock, calls waiting and
   reached, average and worst response, green-wave count and the latest
   dispatcher event.
 - **Red cross**: UKC Ljubljana, the receiving hospital for every patient.
@@ -72,27 +75,19 @@ simulated second). Use `--delay 20` for faster playback or the GUI's
 **Delay** box. The window closes at 30:00 simulated time and the
 terminal prints each call's response time.
 
-Single headless run per policy on SUMO 1.28.0 (2026-11-22, no teleports).
-Averages cover reached calls only, so read them with the reached count:
+Run both in step, side by side on a 1920 px wide screen (the final result
+stays for 30 s):
 
-| | B0 baseline | A1 dispatch only | A2 lights only | A3 RescueFlow |
-|---|---:|---:|---:|---:|
-| Calls reached | 8/8 | 8/8 | 7/8 | 7/8 |
-| Average response, reached calls | 7:50 | 4:47 | 7:48 | 4:51 |
-| Worst response, reached calls | 15:29 | 8:59 | 15:35 | 13:39 |
-| Reached within 5:00 | 2/8 | 6/8 | 2/8 | 5/8 |
-| Routine transfers late or unfinished | 0/7 | 3/7 | 0/7 | 4/7 |
-| Phase shortenings | 0 | 0 | 4 | 6 |
-| Civilian mean time loss, finished trips | 175 s | 176 s | 166 s | 193 s |
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation compare
+```
 
-These replace earlier figures (7:35 vs 3:38, "6/8" and three identical
-repeats), which came from runs where SUMO teleported ambulances after
-junction collisions. A3 did not reach CALL-8 and was not better than A1
-here. Small changes to demand, signals or timing change individual calls
-by many minutes: while building the scene, several network, demand and
-planner variants were tried with both policies' results visible, and some
-were worse for A3 than B0. Treat this scene as a visual illustration, not
-evidence of an improvement; use matched multi-seed benchmarks for that.
+Frozen network, one scene, repeatable (2026-11-22): average response 7:14
+baseline, 3:18 RescueFlow; worst 14:25 and 6:12; within 5:00 3/8 and 7/8;
+routine transfers late 0/7 and 1/7. With the lights off RescueFlow is also
+3:18, and the fixed rule makes the AI's 11 choices, so the gain is dispatch.
+This is one illustrative scene; use the multi-seed benchmarks as evidence.
+Older figures came from networks that differed between runs.
 
 Use `--output` to keep observations and `--headless` to omit the window:
 

@@ -192,6 +192,27 @@ class TraciSimulationController:
             traci.poi.setParameter(poi_id, "label", label)
             state["label"] = label
 
+    def gui_box(self, box_id: str, corners: tuple[float, float, float, float] | None, color: tuple[int, ...],
+                *, fill: bool = False, line_width: float = 14.0, layer: float = 8.0) -> None:
+        """Create, recolor or remove (`corners=None`) a rectangle in the SUMO window."""
+        import traci
+
+        known = box_id in self._gui_markers
+        if corners is None:
+            if known:
+                traci.polygon.remove(box_id)
+                del self._gui_markers[box_id]
+            return
+        left, bottom, right, top = corners
+        shape = [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)]
+        if known and self._gui_markers[box_id].get("corners") != corners:
+            traci.polygon.setShape(box_id, shape)
+        elif not known:
+            traci.polygon.add(box_id, shape, color, fill=fill, layer=layer, lineWidth=line_width)
+        if known and self._gui_markers[box_id].get("color") != color:
+            traci.polygon.setColor(box_id, color)
+        self._gui_markers[box_id] = {"corners": corners, "color": color}
+
     def gui_vehicle_view(self, colors: dict[str, tuple[int, int, int, int]]) -> dict[str, tuple[float, float]]:
         """Recolor live fleet vehicles and return their actual SUMO positions."""
         import traci

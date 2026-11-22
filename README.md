@@ -64,9 +64,11 @@ repository root in PowerShell:
 ```
 
 **baseline** sends the nearest free ambulance with normal signals.
-**rescueflow** re-plans the whole fleet urgent-first and gives
-emergency runs green-wave signal priority. Both use identical inputs.
-The left panel explains the colors and shows live response times. See the
+**rescueflow** uses the dashboard's decision engine (optimizer plans ranked
+by the AI, decided again when a unit frees up) and green-wave priority. Both
+use the same frozen network, fleet, calls and traffic. Its box *The difference,
+live* compares every call with the recorded baseline run, and squares on the map
+mark where it differs. `presentation compare` opens both in step. See the
 [runbook](docs/RUNBOOK.md#native-sumo-2d-presentation) for the legend and
 reference results.
 
