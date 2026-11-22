@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Mark } from './Agent'
 import { logEntries } from './log'
-import { clock, deadline, isStale, needsUnit, nextStop, openTasks, pickedUp, plannedArrival, priorityRank, proposedUnits, shortId, taskLabel, timeOfDay, unitState } from './model'
+import { clock, deadline, isStale, needsUnit, nextStop, openTasks, pickedUp, plannedArrival, priorityRank, proposedUnits, shortId, taskLabel, timeOfDay, unitColor, unitState } from './model'
 import type { Geometry, Place, Proposal, Snapshot, Stop, Task } from './model'
 
 type Menu = (event: React.MouseEvent, kind: 'unit' | 'task', id: string) => void
@@ -32,7 +32,7 @@ export function CallQueue({ state, place, proposal, selected, onSelect, onMenu, 
             <span className="call-main"><strong>{task.id}<em>{taskLabel(task)}{task.required_capabilities.length ? `, ${task.required_capabilities.join(' ')}` : ''}</em></strong>
               <small>{pickedUp(task) ? `to ${place(task.dropoff_node)}` : place(task.pickup_node)}{state.notes[task.id] ? `, ${state.notes[task.id]}` : ''}</small></span>
             <span className="call-side">
-              {task.assigned_vehicle_id ? <span className="callsign">{task.assigned_vehicle_id}</span> : null}
+              {task.assigned_vehicle_id ? <span className="callsign" style={{ background: unitColor(task.assigned_vehicle_id) }}>{task.assigned_vehicle_id}</span> : null}
               {suggested[task.id] && <span className="suggest" title="Unit in the plan you are viewing"><Mark size={9}/>{suggested[task.id]}</span>}
               {Number.isFinite(left) && <time className={left < 0 || late ? 'late' : left < 120 ? 'soon' : ''} title={`Due ${timeOfDay(deadline(task))}`}>{left < 0 ? `+${clock(-left)}` : clock(left)}</time>}
             </span>
@@ -54,7 +54,7 @@ export function UnitBoard({ state, geometry, place, proposal, selected, onSelect
         const stop = nextStop(vehicle)
         const plan = suggested.filter(([, unit]) => unit === vehicle.id).map(([task]) => task)
         return <tr key={vehicle.id} className={`${status.key} ${selected === vehicle.id ? 'selected' : ''}`} onClick={() => onSelect(vehicle.id)} onContextMenu={(event) => onMenu(event, 'unit', vehicle.id)}>
-          <th scope="row"><button className="callsign">{vehicle.id}</button></th>
+          <th scope="row"><button className="callsign" style={{ background: unitColor(vehicle.id) }}>{vehicle.id}</button></th>
           <td className="crew">{vehicle.capabilities.join(' ')}{vehicle.equipment_aboard.length > 0 && <em> {vehicle.equipment_aboard.join(' ')}</em>}</td>
           <td><span className={`state ${status.key}`}>{status.label}</span></td>
           <td className="job">{status.key !== 'out' && stop?.task_id ? <>{stop.task_id}<small>{place(stop.node_id)}</small></> : <small>{state.telemetry.fleet?.[vehicle.id] ? '' : place(vehicle.node_id)}</small>}</td>
@@ -80,7 +80,7 @@ function jobs(stops: Stop[]): Job[] {
   return [...found.values()]
 }
 
-export function Timeline({ state, geometry, proposal, selected, onSelect }: Common) {
+export function Timeline({ state, proposal, selected, onSelect }: Common) {
   const world = state.world!
   const now = world.sim_time_s
   const [from, to] = [now - 300, now + 1500]
@@ -97,7 +97,7 @@ export function Timeline({ state, geometry, proposal, selected, onSelect }: Comm
       const change = preview?.vehicle_plans.find((entry) => entry.vehicle_id === vehicle.id)
       const open = change && change.stops.filter((s) => s.service_completed_at_s == null)
       return <div key={vehicle.id} className={`lane ${change ? 'changing' : ''}`}>
-        <button className={`callsign ${unitState(vehicle, state, geometry).key}`} onClick={() => onSelect(vehicle.id)}>{vehicle.id}</button>
+        <button className="callsign" style={{ color: unitColor(vehicle.id) }} onClick={() => onSelect(vehicle.id)}>{vehicle.id}</button>
         <div className="track">{ticks.map((t) => <i key={t} style={{ left: `${at(t)}%` }}/>)}
           <div className="bars">{bars(vehicle.route_stops)}</div>
           {open && <div className="bars next">{bars(open, true)}</div>}

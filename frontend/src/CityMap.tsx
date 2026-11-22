@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { isStale, nearestRoad, needsUnit, openTasks, pickedUp, planActions, priorityRank, shortId, unitState } from './model'
+import { isStale, nearestRoad, needsUnit, nextStop, openTasks, pickedUp, planActions, priorityRank, shortId, timeOfDay, unitColor, unitState } from './model'
 import type { Geometry, Point, Proposal, Snapshot } from './model'
 
 const line = (shape: Point[]) => shape.map(([x, y]) => `${x},${-y}`).join(' ')
@@ -14,7 +14,64 @@ interface Props {
   onMapMenu: (event: React.MouseEvent, point: Point, road: string | null) => void
   /** While an emergency is being logged: its location so far, and where to report a click. */
   draft: Point | null; picking: boolean; onPick: (point: Point) => void; focus: { at: Point; key: number } | null
-  satellite: boolean; traffic: boolean
+  satellite: boolean
+}
+
+/** A route as one line, shifted sideways so units on the same street stay apart. */
+function routeLine(geometry: Geometry, route: string[], from: Point | null, shift: number): Point[] {
+  const points: Point[] = []
+  for (const id of route) for (const point of geometry.edges[id]?.shape ?? []) {
+    const last = points.at(-1)
+    if (!last || Math.hypot(point[0] - last[0], point[1] - last[1]) > 1.5) points.push(point)
+  }
+  if (from && points.length > 1) {
+    // Drop what the unit has already driven on its current road.
+    const limit = Math.min(points.length - 1, geometry.edges[route[0]]?.shape.length ?? 1)
+    let cut = 0, best = Infinity
+    for (let i = 0; i < limit; i++) {
+      const [[ax, ay], [bx, by]] = [points[i], points[i + 1]]
+      const along = Math.max(0, Math.min(1, ((from[0] - ax) * (bx - ax) + (from[1] - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2 || 1)))
+      const distance = Math.hypot(from[0] - ax - along * (bx - ax), from[1] - ay - along * (by - ay))
+      if (distance < best) { best = distance; cut = i }
+    }
+    points.splice(0, cut + 1, from)
+  }
+  return points.map((point, i) => {
+    const [a, b] = [points[Math.max(0, i - 1)], points[Math.min(points.length - 1, i + 1)]]
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+    return [point[0] + (b[1] - a[1]) / length * shift, point[1] - (b[0] - a[0]) / length * shift]
+  })
+}
+
+/** Where a route reaches a place: the first point near it, or the closest one. */
+function reaches(points: Point[], at: Point | undefined) {
+  if (!at) return points.length - 1
+  let best = points.length - 1, distance = Infinity
+  for (let i = 0; i < points.length; i++) {
+    const d = Math.hypot(points[i][0] - at[0], points[i][1] - at[1])
+    if (d < 45) return i
+    if (d < distance) { distance = d; best = i }
+  }
+  return best
+}
+
+/** Direction arrows along a line, one every `step` metres. */
+function arrows(points: Point[], step: number) {
+  const found: { at: Point; angle: number }[] = []
+  let left = step * 0.6
+  for (let i = 1; i < points.length; i++) {
+    const [a, b] = [points[i - 1], points[i]]
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1])
+    let done = 0
+    while (length - done >= left) {
+      done += left
+      left = step
+      found.push({ at: [a[0] + (b[0] - a[0]) * done / length, a[1] + (b[1] - a[1]) * done / length],
+        angle: Math.atan2(-(b[1] - a[1]), b[0] - a[0]) * 180 / Math.PI })
+    }
+    left -= length - done
+  }
+  return found
 }
 
 /** All streets, merged into a few paths so the city stays cheap to draw. */
@@ -48,7 +105,7 @@ function streetLabels(geometry: Geometry) {
   return [...best].map(([name, value]) => ({ name, ...value })).sort((a, b) => b.length - a.length)
 }
 
-export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, onMapMenu, draft, picking, onPick, focus, satellite, traffic }: Props) {
+export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, onMapMenu, draft, picking, onPick, focus, satellite }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Point>([800, 500])
   const [view, setView] = useState<{ zoom: number; center: Point } | null>(null)
@@ -128,6 +185,37 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
     return heading.current[id].angle
   }
 
+  // Every unit that is moving: the way to its next stop, then the rest of its work.
+  const ids = Object.keys(world.vehicles)
+  const shiftOf = (id: string) => (ids.indexOf(id) - (ids.length - 1) / 2) * 3.2 * u
+  const changing = new Set(preview ? Object.keys(preview.routes) : [])
+  const paths = ids.flatMap((id) => {
+    const [live, vehicle] = [fleet[id], world.vehicles[id]]
+    const stop = nextStop(vehicle)
+    const status = unitState(vehicle, state, geometry).key
+    if (!live || !stop || ['out', 'free'].includes(status) || changing.has(id)) return []
+    const points = routeLine(geometry, live.route, live.xy, shiftOf(id))
+    if (points.length < 2) return []
+    const end = reaches(points, geometry.nodes[stop.node_id])
+    const serving = ['scene', 'hospital'].includes(status)
+    return [{ id, color: unitColor(id), now: serving ? points.slice(0, 1) : points.slice(0, end + 1), later: points.slice(serving ? 0 : end) }]
+  })
+  const suggested = Object.entries(preview?.routes ?? {}).flatMap(([id, route]) => {
+    const points = routeLine(geometry, route, fleet[id]?.xy ?? null, shiftOf(id))
+    const first = preview?.vehicle_plans.find((entry) => entry.vehicle_id === id)?.stops.find((stop) => stop.service_completed_at_s == null)
+    const end = first ? reaches(points, geometry.nodes[first.node_id]) : points.length - 1
+    return points.length > 1 ? [{ id, color: unitColor(id), points: points.slice(0, end + 1), later: points.slice(end) }] : []
+  })
+  // Where each unit is going next, stacked when several go to one place.
+  const targets = ids.flatMap((id) => {
+    const vehicle = world.vehicles[id]
+    const plan = preview?.vehicle_plans.find((entry) => entry.vehicle_id === id)
+    const stop = plan ? plan.stops.find((entry) => entry.service_completed_at_s == null) : nextStop(vehicle)
+    const at = stop && geometry.nodes[stop.node_id]
+    if (!stop?.task_id || !at || ['out', 'scene', 'hospital'].includes(unitState(vehicle, state, geometry).key)) return []
+    return [{ id, node: stop.node_id, at, eta: Math.max(stop.arrival_s ?? 0, world.sim_time_s), suggested: Boolean(plan) }]
+  })
+
   function pointAt(event: React.MouseEvent): Point {
     const rect = box.current!.getBoundingClientRect()
     return [origin[0] + (event.clientX - rect.left) * u, -(origin[1] + (event.clientY - rect.top) * u)]
@@ -163,17 +251,18 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
         x={AERIAL[0] + geometry.utm_offset[0]} y={-(AERIAL[3] + geometry.utm_offset[1])} width={AERIAL[2] - AERIAL[0]} height={AERIAL[3] - AERIAL[1]}/>}
       <Roads geometry={geometry} u={u}/>
       {edge && geometry.edges[edge] && <polyline className="picked" points={line(geometry.edges[edge].shape)} strokeWidth={6 * u}/>}
-      {traffic && <g className="traffic">{Object.entries(state.telemetry.traffic ?? {}).map(([id, [x, y]]) =>
-        <circle key={id} r={Math.max(1.6 * u, 2.2)} style={{ transform: `translate(${x}px,${-y}px)` }}/>)}</g>}
 
-      {Object.entries(fleet).map(([id, live]) => world.vehicles[id] && world.vehicles[id].status !== 'broken' && <g key={id}
-        className={`route ${unitState(world.vehicles[id], state, geometry).key}`} opacity={focusUnit && focusUnit !== id ? 0.2 : 0.9}>
-        {live.route.map((road, i) => geometry.edges[road] && <polyline key={i} points={line(geometry.edges[road].shape)} strokeWidth={3.5 * u}/>)}
+      {paths.map(({ id, now: current, later, color }) => <g key={id} className="path" style={{ color }} opacity={focusUnit && focusUnit !== id ? 0.15 : 1}>
+        {focusUnit === id && later.length > 1 && <polyline className="later" points={line(later)} strokeWidth={2.5 * u} strokeDasharray={`${2 * u} ${5 * u}`}/>}
+        <polyline className="under" points={line(current)} strokeWidth={8 * u}/>
+        <polyline points={line(current)} strokeWidth={4.5 * u}/>
+        {arrows(current, 70 * u).map(({ at, angle }, n) => <path key={n} className="chevron" transform={`translate(${at[0]},${-at[1]}) rotate(${angle}) scale(${u})`} d="M-3,-4 L3,0 L-3,4"/>)}
       </g>)}
-      {preview && Object.entries(preview.routes).map(([id, route]) => <g key={id} className="route proposal">
-        {route.map((road, i) => geometry.edges[road] && <polyline key={`under-${i}`} className="under" points={line(geometry.edges[road].shape)} strokeWidth={8 * u}/>)}
-        {route.map((road, i) => geometry.edges[road] && <polyline key={i} points={line(geometry.edges[road].shape)}
-          strokeWidth={4.5 * u} strokeDasharray={`${9 * u} ${6 * u}`}/>)}
+      {suggested.map(({ id, points, later, color }) => <g key={id} className="path suggested" style={{ color }} opacity={focusUnit && focusUnit !== id ? 0.2 : 1}>
+        {focusUnit === id && later.length > 1 && <polyline className="later" points={line(later)} strokeWidth={2.5 * u} strokeDasharray={`${2 * u} ${5 * u}`}/>}
+        <polyline className="under" points={line(points)} strokeWidth={10 * u}/>
+        <polyline points={line(points)} strokeWidth={4.5 * u} strokeDasharray={`${10 * u} ${5 * u}`}/>
+        {arrows(points, 70 * u).map(({ at, angle }, n) => <path key={n} className="chevron" transform={`translate(${at[0]},${-at[1]}) rotate(${angle}) scale(${u})`} d="M-3,-4 L3,0 L-3,4"/>)}
       </g>)}
       {Object.keys(world.closed_edges).map((id) => geometry.edges[id] &&
         <polyline key={id} className="closed" points={line(geometry.edges[id].shape)} strokeWidth={7 * u} strokeDasharray={`${7 * u} ${5 * u}`}/>)}
@@ -206,6 +295,13 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
           <path className="pin" d="M0,-13 L11,0 L0,13 L-11,0 Z"/><text className="pin-text" y={4.2}>{priorityRank(task)}</text>
           <text className="tag-text" x={15} y={4 + 14 * tasks.filter((t) => !pickedUp(t) && t.pickup_node === task.pickup_node).indexOf(task)}>{shortId(task.id)}</text></g>
       })}
+      {targets.map((target) => {
+        const row = targets.filter((t) => t.node === target.node).indexOf(target)
+        return <g key={`to-${target.id}`} className={`target ${target.suggested ? 'ai' : ''}`} opacity={focusUnit && focusUnit !== target.id ? 0.25 : 1}
+          transform={`translate(${target.at[0]},${-target.at[1]}) scale(${u})`}>
+          <rect x={-33} y={16 + row * 18} width={66} height={16} style={{ fill: unitColor(target.id) }}/>
+          <text y={28 + row * 18}>▸ {target.id} {timeOfDay(target.eta)}</text></g>
+      })}
       {Object.values(world.vehicles).map((vehicle) => {
         const live = fleet[vehicle.id]
         const p = live?.xy ?? geometry.nodes[vehicle.node_id]
@@ -213,7 +309,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
         const status = unitState(vehicle, state, geometry)
         const action = actions.find((a) => a.unit === vehicle.id)
         return <g key={vehicle.id} className={`unit ${status.key} ${selected === vehicle.id ? 'selected' : ''}`}
-          style={{ transform: `translate(${p[0]}px,${-p[1]}px)` }} onClick={() => { if (clicked() && !picking) onSelect(vehicle.id) }}
+          style={{ transform: `translate(${p[0]}px,${-p[1]}px)`, '--c': status.key === 'out' ? 'var(--out)' : unitColor(vehicle.id) } as React.CSSProperties} onClick={() => { if (clicked() && !picking) onSelect(vehicle.id) }}
           onContextMenu={(event) => onMenu(event, 'unit', vehicle.id)}>
           <g transform={`scale(${u})`}>
             {selected === vehicle.id && <circle className="halo" r={17}/>}

@@ -317,4 +317,6 @@ tasks, ignoring generated proposal and stop IDs.
 - **A breakdown report waits out a junction** (up to 30 s) instead of failing.
 - **`urgent_first` sends critical calls to the unit that arrives first** in the offered
   options; recorded R1/A1/A2 runs keep cheapest insertion and still replay.
-- Civilian traffic is drawn as dots (telemetry `traffic`) and can be turned off.
+- Civilian traffic is simulated but not drawn. Each unit has one colour everywhere; its
+  path leads to its next stop, with the arrival time there. Selecting a unit also shows, dotted,
+  the rest of its work. An orange outline marks a path the AI suggests.

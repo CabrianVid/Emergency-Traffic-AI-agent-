@@ -84,7 +84,7 @@ kbd { font: 11px/1 var(--data); padding: 2px 4px; border: 1px solid currentColor
 .call-side time { min-width: 40px; text-align: right; font-size: 14px; }
 .soon { color: var(--warn); font-weight: 600; } .late { color: var(--bad); font-weight: 700; }
 .callsign { font-weight: 700; font-size: 13px; }
-.call-side .callsign { padding: 1px 5px; border: 1px solid var(--ink-3); }
+.call-side .callsign, .units th .callsign, .actions .callsign { padding: 1px 6px; color: #fff; }
 .mark path { fill: var(--ai); } .mark .core { fill: var(--black); }
 .suggest { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px 1px 4px; font-weight: 700; color: var(--on-ai); background: var(--ai); white-space: nowrap; }
 .suggest .mark path { fill: #000; } .suggest .mark .core { fill: var(--ai); }
@@ -96,7 +96,7 @@ kbd { font: 11px/1 var(--data); padding: 2px 4px; border: 1px solid currentColor
 .units td { padding: 0 6px 0 0; } .units .crew { width: 54px; color: var(--ink-2); } .units .crew em { font-style: normal; color: var(--ink); font-weight: 600; }
 .units td:nth-child(3) { width: 100px; } .units .eta { width: 92px; text-align: right; padding-right: 12px; }
 .units tr { height: 40px; border-bottom: 1px solid var(--line); }
-.units .callsign { font-size: 16px; }
+.units .callsign { font-size: 15px; }
 .units .job { font-weight: 600; overflow: hidden; } .units small { display: block; font-weight: 400; font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .state { display: inline-block; padding: 2px 0 2px 8px; border-left: 4px solid; white-space: nowrap; }
 .free { --c: var(--free); } .enroute { --c: var(--enroute); } .scene { --c: var(--scene); } .transport { --c: var(--transport); } .hospital { --c: var(--hospital); } .out { --c: var(--out); }
@@ -109,18 +109,16 @@ kbd { font: 11px/1 var(--data); padding: 2px 4px; border: 1px solid currentColor
 .map svg { width: 100%; height: 100%; display: block; touch-action: none; }
 .aerial { filter: var(--aerial); opacity: var(--aerial-opacity); }
 .satellite .aerial { filter: none; opacity: 1; }
-.road-casing path, .road path, .route polyline, .closed, .picked { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.road-casing path, .road path, .closed, .picked { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .road-casing { stroke: var(--road-edge); } .road { stroke: var(--road); }
 .satellite .road { opacity: .5; } .satellite .road-casing { opacity: .35; }
 .picked { stroke: var(--brand); pointer-events: none; }
-.traffic { pointer-events: none; } .traffic circle { fill: #5b5b5e; transition: transform 1s linear; } :root[data-theme=night] .traffic circle { fill: #a8a8ab; }
 .picking svg { cursor: crosshair; } .picking .unit, .picking .call, .picking .hospital { pointer-events: none; }
 .draft path { fill: #000; stroke: #fff; stroke-width: 2; } .draft .hole { fill: var(--brand); } .draft .pulse { stroke: #000; }
-.route { pointer-events: none; stroke: var(--c); }
-.route.free { display: none; }
-.route.proposal { stroke: var(--ai); } .route.proposal .under { stroke: #000; }
-.route.proposal polyline:not(.under) { animation: flow 1.4s linear infinite; stroke-linecap: butt; }
-@keyframes flow { to { stroke-dashoffset: -30; } }
+.path { pointer-events: none; transition: opacity .2s; } .path polyline { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.path .under { stroke: #fff; } .path .later { opacity: .8; } .path.suggested .under { stroke: var(--brand); } .path.suggested polyline:not(.under) { stroke-linecap: butt; }
+.path .chevron { fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.target { pointer-events: none; } .target rect { stroke: #fff; stroke-width: 1; } .target.ai rect { stroke: var(--brand); stroke-width: 2.5; } .target text { fill: #fff; font-size: 12px; font-weight: 700; text-anchor: middle; }
 .closed { stroke: var(--bad); stroke-linecap: butt; pointer-events: none; }
 .street-names { pointer-events: none; font-family: var(--data); text-anchor: middle; fill: var(--label); }
 .street-names text { paint-order: stroke; stroke: var(--halo); stroke-linejoin: round; }
@@ -140,7 +138,7 @@ kbd { font: 11px/1 var(--data); padding: 2px 4px; border: 1px solid currentColor
 .unit .arrow path { fill: var(--c); stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
 .unit .halo { fill: none; stroke: var(--c); stroke-width: 3; }
 .unit .plate { fill: var(--c); stroke: #fff; stroke-width: 1; } .unit .callsign { fill: #fff; font-size: 13px; font-weight: 700; text-anchor: middle; }
-:root[data-theme=night] .unit .callsign { fill: #0b1115; } :root[data-theme=night] .unit .plate { stroke: #0b1115; }
+:root[data-theme=night] .unit .plate { stroke: #0b1115; }
 .unit .plate-ai { fill: var(--ai); stroke: #fff; stroke-width: 1; } .unit .to { fill: var(--on-ai); font-size: 12px; font-weight: 700; }
 .map-tools { position: absolute; right: 10px; bottom: 26px; display: grid; background: var(--pane); border: 1px solid var(--gap); }
 .map-tools button { width: 30px; height: 30px; text-align: center; font-size: 17px; } .map-tools button + button { border-top: 1px solid var(--line); } .map-tools button:hover { background: var(--pick); }

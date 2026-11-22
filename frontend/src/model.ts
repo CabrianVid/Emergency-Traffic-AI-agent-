@@ -40,7 +40,7 @@ export interface Geometry {
 export interface Telemetry {
   fleet?: Record<string, { xy: Point; edge: string; speed_mps: number; route: string[] }>
   signals?: Record<string, { phase: number; state: string }>
-  serving?: string[]; traffic?: Record<string, Point>
+  serving?: string[]
 }
 export interface Activity {
   kind: string; sim_time_s: number; message?: string; vehicle_id?: string; task_id?: string
@@ -146,6 +146,9 @@ export function plannedArrival(task: Task, world: World) {
   return stops.find((s) => s.task_id === task.id && s.service_completed_at_s == null)?.arrival_s ?? null
 }
 
+// One colour per unit, everywhere. Orange is the AI's, red means priority 1 or a problem.
+const unitColors = ['#1565d8', '#8e24aa', '#0b8a3e', '#d81b78', '#0090a8', '#7a4a1e', '#5c6b00', '#3f3fb5']
+export const unitColor = (id: string) => unitColors[(Number(id.replace(/\D/g, '')) + unitColors.length - 1) % unitColors.length]
 export interface UnitState { key: 'free' | 'enroute' | 'scene' | 'transport' | 'hospital' | 'out'; label: string }
 export function unitState(vehicle: Vehicle, state: Snapshot, geometry: Geometry | null): UnitState {
   if (['broken', 'weather_grounded', 'offline'].includes(vehicle.status)) return { key: 'out', label: 'Out of service' }

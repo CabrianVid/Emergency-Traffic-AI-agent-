@@ -52,7 +52,6 @@ function App() {
   const [dock, setDock] = useStored<'timeline' | 'log'>('dock', 'timeline')
   const [night, setNight] = useStored('night', false)
   const [satellite, setSatellite] = useStored('satellite', false)
-  const [traffic, setTraffic] = useStored('traffic', true)
   const [logging, setLogging] = useState(false)
   const [draft, setDraft] = useState<Point | null>(null)
   const [focus, setFocus] = useState<{ at: Point; key: number } | null>(null)
@@ -238,12 +237,12 @@ function App() {
     <main className="center" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${dockHeight}px` }}>
       <div className="map-pane">
         {geometry && geometry.network === state.network ? <CityMap key={run} geometry={geometry} state={state} proposal={plan} selected={selected} onSelect={(id) => { if (id) select(id); else setSelected(null) }}
-          edge={edge} onEdge={setEdge} onMenu={openMenu} onMapMenu={mapMenu} satellite={satellite} traffic={traffic}
+          edge={edge} onEdge={setEdge} onMenu={openMenu} onMapMenu={mapMenu} satellite={satellite}
           draft={draft} picking={logging} onPick={setDraft} focus={focus}/> : <p className="empty">Loading the map</p>}
         {logging && geometry ? <NewCall geometry={geometry} point={draft} busy={Boolean(busy)} onClose={stopCall} onSubmit={(call) => void logCall(call)}
           onPoint={(point, show) => { setDraft(point); if (show) setFocus({ at: point, key: Date.now() }) }}/>
         : <Inspector state={state} geometry={geometry} place={place} selected={selected} edge={edge} busy={Boolean(busy)} onEvent={(kind, ref) => void inject(kind, ref)} onClose={() => { setSelected(null); setEdge(null) }}/>}
-        {plan && !isStale(state) && planActions(plan, state.world).length > 0 && <p className="map-key"><i/>Suggested route</p>}
+        {plan && !isStale(state) && planActions(plan, state.world).length > 0 && <p className="map-key"><i/>Suggested by the AI</p>}
       </div>
       <Splitter axis="y" value={dockHeight} min={110} max={480} invert onChange={setDockHeight}/>
       <section className="pane dock">
@@ -264,7 +263,6 @@ function App() {
       <span>Plan {state.world.plan_revision}</span>
       <span className="grow"/>
       {geometry?.network === 'ljubljana' && <button aria-pressed={satellite} onClick={() => setSatellite(!satellite)}>Aerial photo</button>}
-      <button aria-pressed={traffic} onClick={() => setTraffic(!traffic)}>Traffic</button>
       <button aria-pressed={night} onClick={() => setNight(!night)}>Night</button>
       <button aria-pressed={session} title="F9" onClick={() => setSession(!session)}>Training</button>
     </footer>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { clock, isStale, needsUnit, nextStop, openTasks, plannedArrival, deadline, planActions, planHeadline, priorityRank, strategyLabels, timeOfDay, unitState, words } from './model'
+import { clock, isStale, needsUnit, nextStop, openTasks, plannedArrival, deadline, planActions, planHeadline, priorityRank, strategyLabels, timeOfDay, unitColor, unitState, words } from './model'
 import type { Geometry, Interpretation, Place, Proposal, Recommendation, Snapshot, World } from './model'
 import { logEntries, triggerOf } from './log'
 
@@ -63,7 +63,7 @@ function Actions({ plan, world, place, onSelect }: { plan: Proposal; world: Worl
   return <ol className="actions">{actions.map((action) => {
     const task = world.tasks[action.task]
     return <li key={action.task}>
-      <button onClick={() => onSelect(action.unit)}>{action.unit}</button>
+      <button className="callsign" style={{ background: unitColor(action.unit) }} onClick={() => onSelect(action.unit)}>{action.unit}</button>
       <span className="to">▸</span>
       <button onClick={() => onSelect(action.task)}><b className={`prio p${task ? priorityRank(task) : 3}`}>{task ? priorityRank(task) : ''}</b>{action.task}</button>
       <span className="where">{task ? place(task.pickup_node) : ''}{action.from && <em> was {action.from}</em>}</span>
