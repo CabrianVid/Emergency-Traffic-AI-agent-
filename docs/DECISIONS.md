@@ -271,3 +271,18 @@ tasks, ignoring generated proposal and stop IDs.
   aborts otherwise. The benchmark plans civilian routes around closures instead.
 - **Decisions API client sends `Accept-Encoding: gzip, deflate`** because the
   installed Brotli decoder is incompatible with the HTTP client.
+
+# Second generation and benchmark engine 2 (2026-11-22)
+
+- **Waiting queue replaces nearest-free-unit** in the offered options; a newly free
+  unit triggers a new decision. New policy names (R1Q, A1Q, A2Q) and prompt v2, so the
+  published R1/A1/A2 runs keep their own options and prompt and still replay.
+- **Engine 2 applies to every policy in new runs, B0 and B1 included:** a unit at a stop
+  finishes it before a new plan is installed (loading used to start over); a free unit's
+  delay counts from its report; a unit SUMO drops on re-insertion, or that a queue keeps
+  out of its stop lane at the scene, is recovered. Recorded runs replay on engine 1.
+- **Estimates start from now** for the new options (`refresh_schedules`): stale times
+  made queueing behind a busy unit look too fast. Units whose stops do not change are
+  not touched.
+- A margin against small estimated gains was tried on seen seeds 0-149 and dropped (no
+  effect). Seeds 0-199 were used to find the defects above.

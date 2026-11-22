@@ -9,15 +9,18 @@ Branch `simplify-decision-flow`. Plain-English guide with all results:
   options, approve/reject/recalculate, signal priority, live OpenAI ranking with
   a labeled fallback, Monte Carlo benchmark, replay (headless and in the window,
   from the dashboard and from a folder holding only the published bundle).
-- **Tests:** 68 pass (`pytest tests/ -q`), frontend builds. No automated test calls
+- **Tests:** 73 pass (`pytest tests/ -q`), frontend builds. No automated test calls
   the real API; live ranking was checked by hand and by the benchmark.
-- **Measured:** 5,000 runs, 4,996 valid. The B1 central-queue baseline beats AI
+- **Measured:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
   dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking
   adds 5.6 s; signal priority adds nothing.
-- **Recommended next step:** offer B1's queue dispatch as an option to the AI and
-  decide again when a unit frees up, then evaluate on fresh seeds (1000+), since
-  seeds 0-999 have been seen.
-- **Limitations:** vehicle-delay estimates for a free unit count from time zero;
+- **Second generation built, not evaluated:** waiting-queue option, free-unit
+  trigger (benchmark and dashboard), schedules re-estimated from now, and engine 2
+  (below). Checked on 10 seen scenarios only: 50/50 runs valid.
+- **Next step:** freeze, then run the fresh seeds (about 2.5-3.5 h, about $1):
+  `python -m rescueflow.benchmark.montecarlo run --root experiments/mc-queue --first-seed 1000 --scenarios 1000 --policies B0,B1,R1Q,A1Q,A2Q --jobs 12`
+- **Limitations:** a unit that cannot change lane at the scene is taken off the road
+  until its lane has a gap (can exceed a minute); cars can still gridlock a junction;
   a breakdown inside a junction must wait a step; no latency sensitivity run; the
   city-wide scene is an illustration with older policy names.
 

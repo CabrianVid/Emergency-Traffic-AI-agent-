@@ -62,7 +62,7 @@ signals, old A3 was A1 + signals) and are kept under `experiments/published`.
 
 ## Results
 
-1,000 scenarios x 5 policies = 5,000 SUMO runs, 4,996 valid.
+1,000 scenarios x 5 policies = 5,000 SUMO runs, 4,995 valid.
 
 | | B0 nearest unit | **B1 central queue** | R1 optimizer, no AI | A1 AI dispatch | A2 AI + lights |
 |---|---:|---:|---:|---:|---:|
@@ -108,6 +108,22 @@ real cached answers) and none is a fallback. 19 A2 runs ended while a signal
 request was still open. At some decision
 points no feasible plan existed (mostly equipment moved by a breakdown) and
 nothing changed: B0 22, B1 50, A1 17, A2 17, R1 14.
+
+## Second generation (2026-11-22, not evaluated on new scenarios yet)
+
+The options offered to the AI and the dispatcher are now urgent first, least
+disruption and **waiting queue** (it replaces nearest free unit). A call left
+waiting gets an estimated response, so waiting never looks free. When a unit
+becomes free for a waiting call, the system decides again; in the dashboard it
+pauses and shows options, and the dispatcher still decides.
+
+Benchmark names: R1Q, A1Q and A2Q are R1, A1 and A2 with these changes. The
+results above are the older system and still replay exactly.
+
+A 10-scenario check on seeds 0-9 (already seen, so **not evidence**): 50 of 50
+runs valid, B0 272 s, B1 169 s, R1Q 163 s, A1Q 163 s, A2Q 171 s. B1 -> A1Q is
++4.0 s with a 95% interval of -0.5 to 12.4: a tie. The AI chose the same option
+as the fixed rule in all 34 A1Q rankings.
 
 ## Dashboard controls
 
