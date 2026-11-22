@@ -72,24 +72,27 @@ simulated second). Use `--delay 20` for faster playback or the GUI's
 **Delay** box. The window closes at 30:00 simulated time and the
 terminal prints each call's response time.
 
-Reference results on SUMO 1.28.0 (headless, repeated three times for
-RescueFlow with identical results):
+Single headless run per policy on SUMO 1.28.0 (2026-11-22, no teleports).
+Averages cover reached calls only, so read them with the reached count:
 
-| | Baseline (B0) | RescueFlow (A3) |
-|---|---:|---:|
-| Average response (report to first unit on scene) | 7:35 | 3:38 |
-| Worst response | 14:37 | 7:29 |
-| Calls reached within 5:00 | 2/8 | 6/8 |
-| Routine transfers late or unfinished | 0/7 | 4/7 |
-| Green-wave phase shortenings | 0 | 6 |
-| Civilian mean time loss | 168 s | 199 s |
+| | B0 baseline | A1 dispatch only | A2 lights only | A3 RescueFlow |
+|---|---:|---:|---:|---:|
+| Calls reached | 8/8 | 8/8 | 7/8 | 7/8 |
+| Average response, reached calls | 7:50 | 4:47 | 7:48 | 4:51 |
+| Worst response, reached calls | 15:29 | 8:59 | 15:35 | 13:39 |
+| Reached within 5:00 | 2/8 | 6/8 | 2/8 | 5/8 |
+| Routine transfers late or unfinished | 0/7 | 3/7 | 0/7 | 4/7 |
+| Phase shortenings | 0 | 0 | 4 | 6 |
+| Civilian mean time loss, finished trips | 175 s | 176 s | 166 s | 193 s |
 
-Baseline keeps routine work untouched and sends whichever unit is free,
-so calls that arrive after the three spare units are busy wait 13–14
-minutes. RescueFlow diverts units that have not yet picked up a routine
-patient, which shortens emergency response but delays routine transfers.
-This is one illustrative synthetic scenario, not the matched benchmark.
-GUI runs can differ by a few seconds from headless runs.
+These replace earlier figures (7:35 vs 3:38, "6/8" and three identical
+repeats), which came from runs where SUMO teleported ambulances after
+junction collisions. A3 did not reach CALL-8 and was not better than A1
+here. Small changes to demand, signals or timing change individual calls
+by many minutes: while building the scene, several network, demand and
+planner variants were tried with both policies' results visible, and some
+were worse for A3 than B0. Treat this scene as a visual illustration, not
+evidence of an improvement; use matched multi-seed benchmarks for that.
 
 Use `--output` to keep observations and `--headless` to omit the window:
 

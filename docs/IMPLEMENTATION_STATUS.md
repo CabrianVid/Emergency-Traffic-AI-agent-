@@ -40,12 +40,12 @@ helpers (`gui_marker`, `gui_vehicle_view`, `gui_frame`).
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-Verified on SUMO 1.28.0: both policies complete headless and in the GUI
-(screenshots inspected). RescueFlow (A3) repeated three times with
-identical results: average response 3:38, worst 7:29, 6/8 within 5:00,
-4/7 routine transfers late. Baseline (B0): 7:35, 14:37, 2/8, 0/7 late.
-All 51 tests pass. Runs record a few SUMO junction-collision warnings
-(collision action is `warn`), counted in each run's `summary.json`.
+Both policies complete headless on SUMO 1.28.0 with no teleports. One run
+each (reached calls / average over reached calls): B0 8/8, 7:50; A1 8/8,
+4:47; A2 7/8, 7:48; A3 7/8, 4:51. A3 did not reach CALL-8. Earlier
+published figures (A3 3:38, B0 7:35) are withdrawn: `SUMO_PROCESSING` was
+left empty, so SUMO teleported R2 in B0 and R2 and R10 in A3. See the
+runbook for the table and the caveat on how the scene was tuned.
 
 Building the larger scene exposed and fixed real issues:
 
@@ -57,16 +57,16 @@ Building the larger scene exposed and fixed real issues:
   (B0/A2 reproduce exactly; a seed-0 urgent smoke run gave A1 CALL-2
   249 s instead of the published 1998 s). Rerun the matrix before
   quoting A1/A3 figures.
-- **Re-inserting a moving unit** failed when its next stop was within
-  braking distance, when it lost blue-light status above routine top
-  speed, when a stop lay behind its bumper, or when SUMO queued the
-  insertion. The controller now caps the re-insertion speed
-  (`reroute_speed_capped`), clamps stops ahead, replaces queued
-  insertions, and retries a blocked insertion once at SUMO's maximum safe
-  speed (`reinsertion_speed_relaxed`). These paths previously ended a run
-  with an error, so valid benchmark runs are unaffected.
+- **Re-inserting a moving unit** failed in several situations. The
+  controller now caps the re-insertion speed (`reroute_speed_capped`),
+  clamps stops ahead, replaces queued insertions, and retries a blocked
+  insertion once (`reinsertion_speed_relaxed`). This is a mitigation, not
+  a full fix: A1 and A3 runs still log SUMO "will not be able to depart"
+  errors for R8 (unpriorised junction too close).
 - `_enforce_frozen` read every vehicle's position twice per step and
-  discarded it; removing that made a city run 13× faster (20 s headless).
+  discarded it (about 235 s of a 272 s profiled run). Removing it made
+  runs much faster; the demand also changed, so no clean speedup factor
+  was measured.
 - Opt-in `defer_junction_reroutes` (presentation only) commits a plan while
   a unit is inside a junction and installs its route on the next road edge.
 

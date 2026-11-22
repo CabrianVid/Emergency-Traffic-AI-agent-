@@ -27,10 +27,10 @@
   more urgent task in that profile. B0 and `minimum_disruption` are
   unchanged. All existing tests pass; published A1/A3 benchmark numbers
   predate this and must be regenerated before reuse.
-- **Junction-deferred reroutes are opt-in.** The presentation commits an
-  approved plan immediately and installs a mid-junction unit's route on
-  its next road edge. The dashboard and benchmark keep the stricter
-  "advance and retry" behavior.
+- **Junction-deferred reroutes are opt-in.** The presentation and, since
+  the decision-flow rework, the dashboard commit an approved plan
+  immediately and install a mid-junction unit's route on its next road
+  edge. The benchmark keeps the stricter behavior.
 - **Scene uses actuated, joined signals.** Guessed fixed-time programs
   gave ~4 min civilian delay on every corridor; actuated control keeps
   traffic moving while leaving the green wave something to do.

@@ -52,7 +52,13 @@ NETCONVERT_ARGS = ("--tls.join", "--junctions.join", "--roundabouts.guess", "--r
                    "--tls.default-type", "actuated")
 GUESS_SIGNALS = True
 # Extra SUMO processing options for the scene (see docs/RUNBOOK.md).
-SUMO_PROCESSING: dict[str, str] = {}
+# Without these, SUMO teleports vehicles (including ambulances) after
+# collisions inside imported OSM junction clusters.
+SUMO_PROCESSING: dict[str, str] = {
+    "collision.action": "warn",
+    "collision.check-junctions": "false",
+    "ignore-junction-blocker": "30",
+}
 
 POLICIES = {
     "B0": "BASELINE  ·  nearest free unit  ·  normal traffic lights",

@@ -196,7 +196,7 @@ world so builds using the new stop format can resume mid-hold.
 
 The [2D presentation](RUNBOOK.md#native-sumo-2d-presentation) builds a
 5 × 4 km network from `simulation/presentation/ljubljana-wide-roads.osm.gz`
-(OSM drivable roads, merged from twelve OSM API 0.6 map tiles for
+(OSM drivable roads, merged from twelve OSM API 0.6 map tiles (about 124 MB downloaded) for
 bbox 14.490,46.040–14.545,46.068 on 2026-11-22, ODbL 1.0) with
 `--tls.join --junctions.join --roundabouts.guess --ramps.guess
 --tls.default-type actuated` plus guessed signals. Un-joined variants
