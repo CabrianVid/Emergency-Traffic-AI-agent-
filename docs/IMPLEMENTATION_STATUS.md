@@ -1,5 +1,9 @@
 # Implementation status
 
+The [AdaHack product film](../video/README.md) uses this branch's operator desk,
+recorded SUMO positions and published first-generation benchmark. Its editable
+100-second Remotion composition renders independently of the application.
+
 ## Current: simplified decision flow (2026-11-22)
 
 Branch `simplify-decision-flow`. Plain-English guide with all results:

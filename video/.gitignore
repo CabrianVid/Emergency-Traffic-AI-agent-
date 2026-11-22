@@ -1,0 +1,7 @@
+node_modules/
+public/generated/
+.capture-env/
+.capture/
+.qa/
+out/*
+!out/RescueFlow-AdaHack.mp4
