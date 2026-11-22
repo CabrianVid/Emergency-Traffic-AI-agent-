@@ -17,7 +17,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib.ticker import PercentFormatter
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator, PercentFormatter
 
 from rescueflow.benchmark.inputs import digest
 
@@ -25,9 +26,9 @@ MAPS = {"grid": "Training grid", "ljubljana": "Ljubljana"}
 POLICIES = {
     "B0": "Nearest unit", "B1": "Central queue", "R1Q": "Rule-ranked", "A1Q": "AI-ranked", "A2Q": "AI + green wave",
 }
-PALETTE = dict(zip(POLICIES, ("#9AABB8", "#C4CEDC", "#A78BFA", "#4ECADC", "#FFB46A")))
-BACKGROUND, PANEL, TEXT, MUTED = "#101922", "#162331", "#F4F6FB", "#ADBDCC"
-GOOD, BAD, NEUTRAL = "#61D6AB", "#FF8994", "#526A80"
+PALETTE = dict(zip(POLICIES, ("#5676A2", "#8494AC", "#8D71AD", "#458D7D", "#D28450")))
+BACKGROUND, PANEL, TEXT, MUTED = "#FBFCFF", "#EBEDF5", "#1D293C", "#586680"
+GOOD, BAD = "#2C865E", "#BB5261"
 CAP, TARGET = 900, 300
 
 
@@ -172,183 +173,129 @@ def summarize(runs: pd.DataFrame, calls: pd.DataFrame):
 def style() -> None:
     sns.set_theme(style="darkgrid", context="notebook", rc={
         "figure.facecolor": BACKGROUND, "axes.facecolor": PANEL, "savefig.facecolor": BACKGROUND,
-        "axes.edgecolor": PANEL, "axes.labelcolor": MUTED, "axes.titlecolor": TEXT,
+        "axes.edgecolor": PANEL, "axes.labelcolor": TEXT, "axes.titlecolor": TEXT,
         "text.color": TEXT, "xtick.color": MUTED, "ytick.color": MUTED,
-        "grid.color": "#33475B", "grid.alpha": 0.55, "font.family": "DejaVu Sans",
+        "grid.color": "white", "grid.alpha": 1.0, "font.family": "DejaVu Sans",
     })
 
 
-def canvas(title: str, subtitle: str, rows=1, columns=2, height=7.5):
-    figure, axes = plt.subplots(rows, columns, figsize=(15, height), squeeze=False)
-    figure.subplots_adjust(left=0.10, right=0.965, bottom=0.14, top=0.80, wspace=0.35, hspace=0.48)
-    figure.text(.055, .954, "RESCUEFLOW  /  MATCHED SUMO BENCHMARK", color=PALETTE["A2Q"], weight="bold", size=10)
-    figure.text(.055, .89, title, size=30, weight="bold")
-    figure.text(.055, .84, subtitle, size=12, color=MUTED)
+def canvas(title: str, subtitle: str, *, height: float = 5.45, top: float = .70):
+    figure, axes = plt.subplots(1, 2, figsize=(13.4, height))
+    figure.subplots_adjust(left=.10, right=.958, bottom=.195, top=top, wspace=.30)
+    figure.text(.057, .933, "RESCUEFLOW   /   MATCHED SUMO SIMULATIONS", color="#526485", size=9, weight="bold")
+    figure.text(.055, .84, title, size=25, weight="bold")
+    figure.text(.057, .768, subtitle, size=10, color=MUTED)
     return figure, axes
 
 
 def save(figure, folder: Path, name: str, note: str) -> None:
-    figure.text(.055, .045, note, size=9, color=MUTED)
+    figure.text(.057, .065, note, size=9, color=MUTED)
     figure.savefig(folder / f"{name}.png", dpi=185)
     plt.close(figure)
 
 
-def overview(summary: pd.DataFrame, folder: Path) -> None:
-    fig, axes = canvas("How fast did ambulances arrive?",
-                       "Response and five-minute reach across the same valid scenarios within each map.",
-                       rows=2, height=10)
-    fig.subplots_adjust(left=.17, wspace=.57)
-    ceiling = float(summary["mean_capped_s"].max()) * 1.20
-    for col, (network, title) in enumerate(MAPS.items()):
+def response_histogram(calls: pd.DataFrame, folder: Path) -> None:
+    fig, axes = canvas("Response-time distribution",
+                       "Percentage of calls in each one-minute bin, shown separately for each policy.",
+                       height=5.95, top=.63)
+    handles = [Line2D([0], [0], color=color, lw=3, label=key) for key, color in PALETTE.items()]
+    fig.legend(handles=handles, loc="center", bbox_to_anchor=(.50, .693), ncol=5,
+               frameon=False, handletextpad=.5, columnspacing=1.8)
+    upper = 0.0
+    for ax, (network, label) in zip(axes, MAPS.items()):
+        selected = calls[calls["map"] == network].copy()
+        selected["minutes"] = selected["capped_s"] / 60
+        if selected.empty:
+            continue
+        options = dict(x="minutes", hue="policy", hue_order=list(POLICIES), palette=PALETTE,
+                       bins=np.arange(16), stat="percent", common_norm=False, multiple="layer",
+                       element="step", legend=False, ax=ax)
+        sns.histplot(selected, **options, alpha=.10, linewidth=0)
+        sns.histplot(selected, **options, fill=False, alpha=.78, linewidth=1.6)
+        upper = max(upper, ax.get_ylim()[1])
+        ax.axvline(5, color=MUTED, linewidth=1.1, linestyle="--")
+        ax.set(xlim=(0, 15), xticks=[0, 3, 5, 9, 12, 15], xlabel="Response time (minutes)",
+               ylabel="Share of calls")
+        ax.yaxis.set_major_formatter(PercentFormatter(100, decimals=0))
+        count = int(selected.groupby("policy").size().max())
+        ax.set_title(f"{label}  ·  {count} calls per policy", loc="left", weight="bold", pad=10)
+    for ax in axes:
+        ax.set_ylim(0, upper)
+    save(fig, folder, "01-response-time-distribution",
+         "Dashed line marks the five-minute target. The final bin includes missed calls and responses capped at 15 minutes.")
+
+
+def response_bars(summary: pd.DataFrame, folder: Path, *, target: bool) -> None:
+    column = "target_pct" if target else "mean_capped_s"
+    heading = "Calls reached within five minutes" if target else "Average ambulance response time"
+    subtitle = ("Higher is better. Every reported call counts toward the target."
+                if target else "Lower is better. The average gives equal weight to each scenario.")
+    fig, axes = canvas(heading, subtitle)
+    max_mean = float(summary[column].max())
+    padding = 2.0 if target else max_mean * .027
+    for ax, (network, label) in zip(axes, MAPS.items()):
         frame = summary[summary["map"] == network]
-        order = [p for p in POLICIES if p in frame["policy"].values]
+        order = [code for code in POLICIES if code in frame["policy"].values]
         if not order:
             continue
-        for row, column in enumerate(("mean_capped_s", "target_pct")):
-            ax = axes[row, col]
-            sns.barplot(frame, x=column, y="policy", hue="policy", order=order,
-                        palette=PALETTE, legend=False, edgecolor=PANEL, ax=ax)
-            lookup = frame.set_index("policy")
-            for y, policy in enumerate(order):
-                value = lookup.at[policy, column]
-                ax.text(value + (ceiling * .025 if not row else 2), y, f"{value:.1f}" + ("%" if row else " s"),
-                        va="center", weight="bold", size=10)
-            ax.set(xlim=(0, 112 if row else ceiling), ylabel="", xlabel=(
-                "Calls reached within five minutes" if row else "Mean capped response · seconds"
-            ))
-            ax.set_yticks(range(len(order)), [f"{p} · {POLICIES[p]}" for p in order], fontsize=10)
-            if row:
-                ax.xaxis.set_major_formatter(PercentFormatter(100))
-            heading = f"{title}  /  {int(frame['scenarios'].iloc[0])} scenarios" if not row else "Five-minute target"
-            ax.set_title(heading, loc="left", weight="bold", pad=12)
-    save(fig, folder, "01-response-overview",
-         "Synthetic calls and traffic. Mean gives equal weight to each scenario. Missed calls score 900 seconds.")
+        sns.barplot(frame, x=column, y="policy", hue="policy", order=order, palette=PALETTE,
+                    legend=False, edgecolor=BACKGROUND, linewidth=1.0, ax=ax, errorbar=None, width=.67)
+        values = frame.set_index("policy")
+        for y, code in enumerate(order):
+            value = values.at[code, column]
+            ax.text(value + padding, y, f"{value:.1f}%" if target else f"{value:.1f} s", va="center",
+                    weight="bold", color=TEXT, size=10)
+        ax.set(xlim=(0, 114 if target else 1.23 * max_mean), ylabel="",
+               xlabel="Share of all calls" if target else "Mean response time (seconds)")
+        if target:
+            ax.set_xticks(np.arange(0, 101, 20))
+            ax.xaxis.set_major_formatter(PercentFormatter(100, decimals=0))
+        else:
+            ax.xaxis.set_major_locator(MaxNLocator(6, integer=True))
+        ax.set_title(f"{label}  ·  {int(frame['scenarios'].iloc[0])} matched scenarios", loc="left",
+                     weight="bold", pad=10)
+    filename = "03-five-minute-target" if target else "02-average-response-time"
+    note = ("Both maps use synthetic incidents and demand. Cohorts are matched across all five policies within each map."
+            if target else "Response times are capped at 15 minutes. Missed calls receive the full 15-minute score.")
+    save(fig, folder, filename, note)
 
 
-def gains(pairs: pd.DataFrame, folder: Path) -> None:
-    contrast_order = [("B0", "B1"), ("B0", "R1Q"), ("B0", "A1Q"), ("B0", "A2Q"),
-                      ("B1", "R1Q"), ("B1", "A1Q"), ("B1", "A2Q"), ("R1Q", "A1Q"), ("R1Q", "A2Q"), ("A1Q", "A2Q")]
-    fig, axes = canvas("What did each upgrade add?",
-                       "Paired change in average response time. Positive values mean faster response.",
-                       height=9.5)
-    point_max = max(float(pairs[["saved_pct", "ci_low_pct", "ci_high_pct"]].abs().max().max()), 8)
-    limit = point_max * 1.33
-    for col, (network, title) in enumerate(MAPS.items()):
-        ax = axes[0, col]
-        stats = pairs[pairs["map"] == network].set_index(["reference", "candidate"])
-        plot = []
-        for y, pair in enumerate(contrast_order):
-            if pair not in stats.index:
+def paired_effects(pairs: pd.DataFrame, folder: Path) -> None:
+    contrasts = list(combinations(POLICIES, 2))
+    fig, axes = canvas("How much response time did each policy save?",
+                       "Positive percentages mean faster response. Each comparison uses the same valid scenarios for both policies.",
+                       height=8.5, top=.71)
+    fig.subplots_adjust(bottom=.145, left=.11, wspace=.34)
+    high = max(float(pairs[["saved_pct", "ci_low_pct", "ci_high_pct"]].abs().max().max()), 8)
+    limit = high * 1.27
+    for ax, (network, label) in zip(axes, MAPS.items()):
+        rows = pairs[pairs["map"] == network].set_index(["reference", "candidate"])
+        points = []
+        for y, comparison in enumerate(contrasts):
+            if comparison not in rows.index:
                 continue
-            row = stats.loc[pair]
-            plot.append({"y": y, "x": row["saved_pct"], "direction": "faster" if row["saved_pct"] >= 0 else "slower"})
-            if pd.notna(row["ci_low_pct"]):
-                ax.hlines(y, row["ci_low_pct"], row["ci_high_pct"], color=MUTED, lw=2, zorder=2)
+            row = rows.loc[comparison]
             x = row["saved_pct"]
-            right_side = (0 <= x < limit * .67) or x < -limit * .67
-            ax.annotate(f"{x:+.1f}%  ·  n={int(row['pairs'])}", (x, y), xytext=(10 if right_side else -10, 0),
-                        textcoords="offset points", va="center", ha="left" if right_side else "right",
-                        color=TEXT, size=9, zorder=4)
-        if plot:
-            sns.scatterplot(pd.DataFrame(plot), x="x", y="y", hue="direction", palette={"faster": GOOD, "slower": BAD},
-                            s=90, legend=False, ax=ax, zorder=3, edgecolor=PANEL)
-        ax.axvline(0, color=MUTED, lw=1.1, alpha=.8)
-        ax.set(ylim=(len(contrast_order) - .45, -.55), xlim=(-limit, limit),
-               yticks=range(len(contrast_order)), yticklabels=[f"{a} → {b}" for a, b in contrast_order],
+            points.append({"x": x, "y": y, "direction": "faster" if x >= 0 else "slower"})
+            if pd.notna(row["ci_low_pct"]):
+                ax.hlines(y, row["ci_low_pct"], row["ci_high_pct"], color="#8494AC", lw=2.0)
+            offset = 9 if -limit * .7 < x < limit * .6 or x < -limit * .85 else -9
+            ax.annotate(f"{x:+.1f}%  ·  n={int(row['pairs'])}", (x, y), xytext=(offset, 1),
+                        textcoords="offset points", va="center", ha="left" if offset > 0 else "right",
+                        color=TEXT, size=8.5, weight="bold", zorder=4)
+        if points:
+            sns.scatterplot(pd.DataFrame(points), x="x", y="y", hue="direction",
+                            palette={"faster": GOOD, "slower": BAD}, s=64, legend=False, ax=ax,
+                            zorder=3, edgecolor=BACKGROUND)
+        ax.axvline(0, color="#7886A2", lw=1.0, ls="--")
+        ax.set(xlim=(-limit, limit), ylim=(len(contrasts) - .5, -.5),
+               yticks=range(len(contrasts)), yticklabels=[f"{a} → {b}" for a, b in contrasts],
                xlabel="Response time saved", ylabel="")
-        ax.xaxis.set_major_formatter(PercentFormatter(100))
-        ax.set_title(title, loc="left", weight="bold", pad=12)
-    save(fig, folder, "02-paired-effects",
-         "95% paired bootstrap intervals shown for ≥20 valid pairs. Gains compare each policy with its named reference.")
-
-
-def response_distribution(calls: pd.DataFrame, folder: Path) -> None:
-    fig, axes = canvas("When did help arrive?",
-                       "Each curve shows the percentage of calls actually reached as the response clock advances.")
-    for col, (network, title) in enumerate(MAPS.items()):
-        ax = axes[0, col]
-        data = calls[calls["map"] == network].copy()
-        if data.empty:
-            continue
-        # Unreached calls stay in the denominator but sit beyond the plot.
-        data["minutes"] = data["response_s"].fillna(CAP + 3600) / 60
-        sns.ecdfplot(data, x="minutes", hue="policy", hue_order=list(POLICIES), palette=PALETTE,
-                     ax=ax, linewidth=2.4, legend=not col)
-        ax.axvline(TARGET / 60, ls="--", lw=1, color=MUTED)
-        ax.text(TARGET / 60 + .16, .07, "5 min target", color=MUTED, fontsize=9)
-        ax.set(xlim=(0, CAP / 60), ylim=(0, 1.035), xlabel="Minutes since the call", ylabel="Share of all calls reached")
-        ax.yaxis.set_major_formatter(PercentFormatter(1))
-        ax.set_title(f"{title}  /  {int(data.groupby('policy').size().max())} calls per policy", loc="left", weight="bold")
-    save(fig, folder, "03-response-curves",
-         "Matched cohort across available policies. Curves remain below 100% when a call was missed or took more than 15 minutes.")
-
-
-def tradeoffs(pairs: pd.DataFrame, summary: pd.DataFrame, folder: Path) -> None:
-    fig, axes = canvas("Consistency and traffic trade-offs",
-                       "Averages can hide uneven results. These views separate scenario outcomes and civilian delay.")
-    frame = pairs[(((pairs["reference"] == "B1") & (pairs["candidate"].isin(["A1Q", "A2Q"]))) |
-                  ((pairs["reference"] == "A1Q") & (pairs["candidate"] == "A2Q")))].reset_index(drop=True)
-    ax = axes[0, 0]
-    for index, row in frame.iterrows():
-        start = 0
-        for col, color in (("wins", GOOD), ("ties", NEUTRAL), ("losses", BAD)):
-            percentage = 100 * row[col] / row["pairs"]
-            ax.barh(index, percentage, left=start, color=color, height=.64)
-            if percentage >= 9:
-                ax.text(start + percentage / 2, index, f"{percentage:.0f}%", ha="center", va="center",
-                        color=BACKGROUND if col != "ties" else TEXT, weight="bold", size=9)
-            start += percentage
-    labels = [f"{MAPS[r['map']]}  ·  {r['reference']} → {r['candidate']}" for _, r in frame.iterrows()]
-    ax.set(xlim=(0, 100), yticks=range(len(labels)), yticklabels=labels, xlabel="Share of matched scenarios")
-    ax.invert_yaxis()
-    ax.xaxis.set_major_formatter(PercentFormatter(100))
-    ax.set_title("Faster / within 1 s / slower", loc="left", weight="bold", pad=12)
-    ax = axes[0, 1]
-    actual = summary[summary["policy"].isin(["B1", "A1Q", "A2Q"])].copy()
-    actual["network"] = actual["map"].map(MAPS)
-    sns.barplot(actual, x="network", y="civilian_mean_time_loss_s", hue="policy", edgecolor=PANEL,
-                palette=PALETTE, ax=ax, legend=True)
-    for bars in ax.containers:
-        ax.bar_label(bars, fmt="%.0f s", padding=4, fontsize=9, color=TEXT)
-    ax.margins(y=.2)
-    ax.set(xlabel="", ylabel="Mean SUMO time loss · seconds")
-    ax.set_title("Civilian traffic delay", loc="left", weight="bold", pad=12)
-    fig.subplots_adjust(left=.22, wspace=.42)
-    save(fig, folder, "04-reliability-and-traffic",
-         "Civilian time loss includes entered trips still moving at cutoff. Outcomes within one second are shown as ties.")
-
-
-def traffic_regimes(density: pd.DataFrame, folder: Path) -> None:
-    fig, axes = canvas("Does traffic density change the result?",
-                       "Response time saved within light, moderate, and heavy traffic. Each cell gives the matched sample size.")
-    fig.subplots_adjust(right=.9, wspace=.44)
-    contrasts = [("B0", "A2Q"), ("B1", "A2Q"), ("R1Q", "A1Q"), ("A1Q", "A2Q")]
-    labels = [f"{a} → {b}" for a, b in contrasts]
-    levels = ["light", "moderate", "heavy"]
-    maximum = max(float(density["saved_pct"].abs().max()), 10)
-    colorbar = fig.add_axes((.922, .17, .012, .57))
-    colors = sns.diverging_palette(9, 153, s=80, l=48, center="dark", as_cmap=True)
-    for col, (network, title) in enumerate(MAPS.items()):
-        center = axes[0, col]
-        subset = density[density["map"] == network].set_index(["reference", "candidate", "density"])
-        values = pd.DataFrame(np.nan, index=labels, columns=levels)
-        annotations = pd.DataFrame("", index=labels, columns=levels)
-        for (a, b), label in zip(contrasts, labels):
-            for level in levels:
-                if (a, b, level) not in subset.index:
-                    continue
-                row = subset.loc[(a, b, level)]
-                values.loc[label, level] = row["saved_pct"]
-                annotations.loc[label, level] = f"{row['saved_pct']:+.1f}%\nn={int(row['pairs'])}"
-        sns.heatmap(values, annot=annotations, fmt="", cmap=colors, center=0, vmin=-maximum, vmax=maximum,
-                    cbar=bool(col), cbar_ax=colorbar if col else None, linewidths=2, linecolor=BACKGROUND,
-                    annot_kws={"color": TEXT, "weight": "bold", "size": 11}, ax=center)
-        center.set_title(title, loc="left", weight="bold", pad=12)
-        center.tick_params(axis="y", labelrotation=0)
-        center.tick_params(axis="x", labelrotation=0)
-    colorbar.yaxis.set_major_formatter(PercentFormatter(100))
-    save(fig, folder, "05-traffic-regimes",
-         "Percentages use the matched baseline within each traffic level. Small subgroups are descriptive.")
+        ax.xaxis.set_major_locator(MaxNLocator(7))
+        ax.xaxis.set_major_formatter(PercentFormatter(100, decimals=0))
+        ax.set_title(label, loc="left", weight="bold", pad=12)
+    save(fig, folder, "04-paired-response-improvement",
+         "Dots show the mean percentage change. Lines show 95% paired bootstrap intervals for comparisons with at least 20 valid pairs.")
 
 
 def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) -> str:
@@ -360,8 +307,14 @@ def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) 
         "matched baseline mean as the denominator. Pair counts can differ across comparisons. Intervals",
         "are 95% paired bootstrap intervals and require at least 20 valid pairs. The headline averages use",
         "the common valid cohort. The input manifests and logs preserve failed runs.", "",
-        "## Results and audit", "",
     ]
+    city_count = runs.loc[runs["map"] == "ljubljana", "seed"].nunique()
+    if city_count > 20:
+        lines.extend([
+            f"Ljubljana attempted {city_count} seeds. Reserve seeds were added in numerical order after",
+            "ambulance collisions reduced the number of scenarios valid under every policy.", "",
+        ])
+    lines.extend(["## Results and audit", ""])
     for key, title in MAPS.items():
         lines.extend([f"### {title}", "", "| Policy | Valid / planned | Common scenarios | Mean response | Reached | Within 5 min | P90 reached |",
                       "|---|---:|---:|---:|---:|---:|---:|"])
@@ -384,11 +337,10 @@ def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) 
         lines.append("")
     lines.extend([
         "## Figures and supporting data", "",
-        "- [Response and five-minute target](01-response-overview.png)",
-        "- [Paired effects and confidence intervals](02-paired-effects.png)",
-        "- [Share of calls reached over time](03-response-curves.png)",
-        "- [Consistency and civilian traffic](04-reliability-and-traffic.png)",
-        "- [Effects by traffic density](05-traffic-regimes.png)", "",
+        "- [Response-time distributions](01-response-time-distribution.png)",
+        "- [Average response times](02-average-response-time.png)",
+        "- [Five-minute target](03-five-minute-target.png)",
+        "- [Percentage improvement and confidence intervals](04-paired-response-improvement.png)", "",
         "CSV files contain the per-call observations, run validity and failure reasons, all pairwise",
         "comparisons, and contrasts by traffic density.", "",
         "## Operational effects", "",
@@ -429,11 +381,10 @@ def main() -> None:
         table.to_csv(output / f"{title}.csv", index=False, float_format="%.5f")
     (output / "results.md").write_text(report_text(runs, summary, pairs), encoding="utf-8")
     style()
-    overview(summary, output)
-    gains(pairs, output)
-    response_distribution(shared, output)
-    tradeoffs(pairs, summary, output)
-    traffic_regimes(density, output)
+    response_histogram(shared, output)
+    response_bars(summary, output, target=False)
+    response_bars(summary, output, target=True)
+    paired_effects(pairs, output)
     with ZipFile(output / "rescueflow-benchmark.zip", "w", compression=ZIP_DEFLATED) as bundle:
         for pattern in ("*.png", "*.csv", "results.md"):
             for artifact in sorted(output.glob(pattern)):
