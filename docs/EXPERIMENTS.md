@@ -1,5 +1,8 @@
 # Synthetic SUMO experiments
 
+Start with the [published charts and summary data](../experiments/published/matched-grid-ljubljana/).
+The multi-seed comparisons below are separate from the single city-wide scene in the [runbook](RUNBOOK.md#native-sumo-2d-presentation).
+
 ## Final matched grid and Ljubljana evaluation
 
 Use headless SUMO and a fresh output root. Compare `B0` and `B1` with
@@ -11,7 +14,7 @@ does not become evidence for either AI policy.
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e '.[dashboard,llm,benchmark]'
 .\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo run --root experiments/mc-final-local/grid --first-seed 1000 --scenarios 110 --policies B0,B1,R1Q,A1Q,A2Q --jobs 12
-.\.venv\Scripts\python.exe -m rescueflow.benchmark.ljubljana --root experiments/mc-final-local/ljubljana --first-seed 1000 --scenarios 20 --jobs 4
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.ljubljana --root experiments/mc-final-local/ljubljana --first-seed 1000 --scenarios 26 --jobs 4
 .\.venv\Scripts\python.exe -m rescueflow.benchmark.final_report experiments/mc-final-local
 ```
 
@@ -25,7 +28,8 @@ city and grid seeds use different scenario generators. Pair policies
 within each map. Both maps keep the same modeled 25-second dispatch
 delay and emergency driving rules across policies. The city settings
 disable junction collision checks. This limits safety conclusions
-about those intersections.
+about those intersections. The final city run used seeds 1000–1025,
+including six consecutive reserve seeds to account for invalid runs.
 
 The timing charts display B1, A1Q and A2Q. The report gives a missed
 call a 900-second score and averages each

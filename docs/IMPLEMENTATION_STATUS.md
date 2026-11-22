@@ -1,5 +1,8 @@
 # Implementation status
 
+The dashboard and native SUMO launch instructions are in the [README](../README.md).
+The [documentation index](README.md) links the operator and developer guides.
+
 ## Final matched grid and Ljubljana evaluation
 
 - Completed 680 headless SUMO 1.28.0 runs with Python 3.13.9. The grid ran
@@ -22,16 +25,15 @@
   seconds per call (92 calls). At 1,000 comparable calls per month, the
   illustrative projection is 8.0 aggregate hours of waiting saved. It
   uses observed arrival times and does not estimate outcomes or lives saved.
-- The frozen source, manifests, per-run observations and four Seaborn
-  timing charts are under `experiments/mc-final-2026-11-22/`. The combined
-  report is in `report/results.md`. Code and seed commands are in
-  [EXPERIMENTS.md](EXPERIMENTS.md#final-matched-grid-and-ljubljana-evaluation).
-  Ten existing benchmark and city routing tests passed.
+- The [published charts and summary CSVs](../experiments/published/matched-grid-ljubljana/)
+  accompany the [seed commands and methods](EXPERIMENTS.md#final-matched-grid-and-ljubljana-evaluation).
+  The original local output root is `experiments/mc-final-2026-11-22/`.
+  It contains frozen inputs, per-run logs and the generated report.
 
-## Current: simplified decision flow (2026-11-22)
+## Dispatcher and native SUMO demo
 
-Branch `simplify-decision-flow`. Plain-English guide with all results:
-[SIMPLE_SYSTEM_EXPLANATION.md](SIMPLE_SYSTEM_EXPLANATION.md).
+The [plain-English guide](SIMPLE_SYSTEM_EXPLANATION.md) describes the decision flow
+and the earlier grid study.
 
 - **Working and verified in SUMO:** seven dashboard events, up to three ranked
   options, approve/reject/recalculate, signal priority, live OpenAI ranking with
@@ -44,18 +46,13 @@ Branch `simplify-decision-flow`. Plain-English guide with all results:
   at 1600x900 and 1366x768.
 - **AI partner flows:** expected times on every option, keep-the-plan option, reroute and
   traffic-light questions, patient transfer after a breakdown, 30 s reviews.
-- **Side-by-side scene:** `presentation compare`; see DECISIONS for results and cause.
+- **Side-by-side scene:** `presentation compare`. The [runbook](RUNBOOK.md#native-sumo-2d-presentation)
+  gives the display legend and observed results for this single frozen scene.
 - **Tests:** 84 pass (`pytest tests/ -q`), frontend builds. No automated test calls
   the real API; live ranking was checked by hand and by the benchmark.
-- **Measured:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
+- **Earlier grid study:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
   dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking
   adds 5.6 s; signal priority adds nothing.
-- **Second generation built, not evaluated:** waiting-queue option, critical calls to
-  the unit that arrives first (30 seen scenarios: R1Q 169.8 s, B1 169.2 s, a tie), free-unit
-  trigger (benchmark and dashboard), schedules re-estimated from now, and engine 2
-  (below). Checked on 10 seen scenarios only: 50/50 runs valid.
-- **Next step:** freeze, then run the fresh seeds (about 2.5-3.5 h, about $1):
-  `python -m rescueflow.benchmark.montecarlo run --root experiments/mc-queue --first-seed 1000 --scenarios 1000 --policies B0,B1,R1Q,A1Q,A2Q --jobs 12`
 - **Limitations:** a unit that cannot change lane at the scene is taken off the road
   until its lane has a gap (can exceed a minute); cars can still gridlock a junction;
   a breakdown inside a junction must wait a step; no latency sensitivity run; the

@@ -134,22 +134,14 @@ matrix. The console reads `experiments/benchmark.json` when present;
 `experiments/published/replay.html` directly to replay recorded SUMO
 frames and events without Python, Node or SUMO.
 
-## Stage 2 CLI reference
+## CLI reference
 
-## Setup (once per machine)
+### Setup
 
-```powershell
-cd C:\Users\videk\source\repos\AdaHack
-py -3.13 -m venv --system-site-packages .venv
-.\.venv\Scripts\python.exe -m pip install --no-build-isolation --no-deps -e .
-.\.venv\Scripts\python.exe -m rescueflow.cli.main doctor
-```
-
-`--system-site-packages` + `--no-build-isolation --no-deps` is only needed
-if your machine has no outbound network access and `pydantic`/`pytest`/
-`click`/`setuptools` are already available system-wide (e.g. via Miniconda
-base) -- see docs/DECISIONS.md. With normal network access, a plain
-`python -m venv .venv && pip install -e .` works too.
+Create the virtual environment and run `rescueflow doctor` from the
+repository root using the [README quick start](../README.md#quick-start).
+For offline development with dependencies already installed, see the
+[environment notes](DECISIONS.md).
 
 If `doctor` reports SUMO missing: install SUMO (https://sumo.dlr.de), then
 either set `SUMO_HOME` to the install directory (the folder containing

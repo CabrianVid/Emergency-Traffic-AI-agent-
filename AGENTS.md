@@ -1,7 +1,8 @@
 # AGENTS.md -- RescueFlow handoff
 
 You are continuing work on RescueFlow AI, an AdaHack 2026 hackathon
-demonstration. **Before writing any code:**
+demonstration. Start with the [documentation index](docs/README.md).
+**Before writing any code:**
 
 1. Read [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) -- the
    source-of-truth design document. For prompt 4, start with sections
@@ -57,9 +58,10 @@ demonstration. **Before writing any code:**
 
 ## Current benchmark
 
-`rescueflow.benchmark.montecarlo` (B0, B1, R1, A1, A2). Seeds 0-999 have been
-seen: evaluate any tuned change on fresh seeds. Never mix AI fallback runs into
-results, and report B1 whenever A1 is compared with B0.
+Use the [matched grid and Ljubljana evaluation](docs/EXPERIMENTS.md#final-matched-grid-and-ljubljana-evaluation)
+as the current reference. Its policy comparison centers on B1, A1Q and A2Q.
+Use fresh seeds to evaluate a tuned change and keep AI fallback runs out of
+AI-policy result sets.
 
 ## Reproduce the older evaluation
 
