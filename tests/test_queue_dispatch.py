@@ -1,7 +1,8 @@
 """B1 central-queue baseline, and calls that were unserved at first."""
 
 from rescueflow.approval.service import DefaultApprovalService
-from rescueflow.decision.alternatives import generate_alternatives, measure, planning_copy
+from rescueflow.decision.agent import fallback_key
+from rescueflow.decision.alternatives import DASHBOARD, generate_alternatives, measure, planning_copy
 from rescueflow.models.core import Stop, StopKind, Task, TaskKind, TaskPriority, TaskStatus, Vehicle, VehicleMode, WorldState
 from rescueflow.planning.insertion import refresh_schedules
 from rescueflow.planning.queue_dispatch import CentralQueuePlanner, FreeUnitTrigger, ready_pairs, waiting_calls
@@ -134,3 +135,17 @@ def test_critical_call_goes_to_the_unit_that_arrives_first_not_the_cheapest_deto
     best = min(o.metrics["mean_call_response_s"] for o in options)
     assert urgent.metrics["mean_call_response_s"] == best
     assert not queue or queue[0].metrics["mean_call_response_s"] >= best
+
+
+def test_keeping_the_plan_never_looks_as_good_as_sending_a_free_unit():
+    world = WorldState(vehicles={"R1": _unit("R1", "0,0")}, tasks={"C1": _call("C1", "10,0")})
+    options, _ = generate_alternatives(world, _travel(), strategies=DASHBOARD, limit=4)
+    keep = next(o for o in options if o.keeps)
+    send = next(o for o in options if not o.keeps)
+    assert keep.metrics["unserved_task_ids"] == ["C1"] and "C1" not in keep.arrivals
+    assert send.arrivals["C1"]["unit"] == "R1" and min(options, key=fallback_key) is send
+    DefaultApprovalService().approve(world, send.proposal, "test", "k")
+    world.tasks["C2"] = _call("C2", "20,0")
+    options, _ = generate_alternatives(world, _travel(), strategies=DASHBOARD, limit=4)
+    assert sum(o.keeps for o in options) == 1, "no change is offered once, whichever strategy found it"
+    assert next(o for o in options if o.keeps).arrivals["C2"]["unit"] is None, "it waits for R1"

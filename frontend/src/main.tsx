@@ -8,7 +8,7 @@ import { NewCall } from './NewCall'
 import type { CallDraft } from './NewCall'
 import { Evaluation, SessionPanel } from './Session'
 import { buildPlaces, isStale, needsUnit, openTasks, planActions, setAnchor, timeOfDay, unitState } from './model'
-import type { Geometry, Interpretation, Network, Point, Scenario, Snapshot } from './model'
+import type { Geometry, Interpretation, Network, Point, Proposal, Scenario, Snapshot } from './model'
 import './style.css'
 
 function useStored<T>(key: string, initial: T): [T, (value: T) => void] {
@@ -53,6 +53,7 @@ function App() {
   const [night, setNight] = useStored('night', false)
   const [satellite, setSatellite] = useStored('satellite', false)
   const [logging, setLogging] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [draft, setDraft] = useState<Point | null>(null)
   const [focus, setFocus] = useState<{ at: Point; key: number } | null>(null)
   const [leftWidth, setLeftWidth] = useStored('left', 376)
@@ -71,7 +72,7 @@ function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = night ? 'night' : 'day' }, [night])
   useEffect(() => {
-    setSelected(null); setEdge(null); selectPlan(null); setGeometry(null); setError(''); setLogging(false); setDraft(null); setFocus(null)
+    setSelected(null); setEdge(null); selectPlan(null); setGeometry(null); setError(''); setLogging(false); setClosing(false); setDraft(null); setFocus(null)
     heldByHand.current = false
     if (!run) return
     let active = true
@@ -123,10 +124,9 @@ function App() {
   }
   /** Operations go on once the dispatcher has decided, unless a trainer paused them. */
   async function goOn() { if (!heldByHand.current) await command('/api/simulation/play') }
-  async function approve(signals: boolean) {
-    if (!plan) return
-    const done = await command(`/api/plans/${plan.proposal_id}/approve`, { expected_plan_revision: plan.based_on_plan_revision,
-      idempotency_key: plan.proposal_id, signal_priority: signals })
+  async function approve(signals: boolean, chosen: Proposal) {
+    const done = await command(`/api/plans/${chosen.proposal_id}/approve`, { expected_plan_revision: chosen.based_on_plan_revision,
+      idempotency_key: chosen.proposal_id, signal_priority: signals })
     if (done) await goOn()
   }
   async function reject() { if (await command('/api/plans/reject')) await goOn() }
@@ -184,7 +184,7 @@ function App() {
   const keys = useRef<(event: KeyboardEvent) => void>(() => {})
   keys.current = (event) => {
     if (event.key === 'F9') { event.preventDefault(); setSession(!session); return }
-    if (event.key === 'Escape') { setMenu(null); setEvaluation(false); setSession(false); setSelected(null); setEdge(null); stopCall(); return }
+    if (event.key === 'Escape') { setMenu(null); setEvaluation(false); setSession(false); setSelected(null); setEdge(null); setClosing(false); stopCall(); return }
     if (typing(event.target) || event.ctrlKey || event.altKey || event.metaKey || !state || offline || busy) return
     const injected = { F2: 'new_emergency', F4: 'equipment_request', F8: 'scenario' }[event.key]
     if (injected) { event.preventDefault(); if (!event.repeat) void inject(injected); return }
@@ -193,8 +193,8 @@ function App() {
     if (event.key === ' ' && !onControl) { event.preventDefault(); control(playing ? 'pause' : 'play') }
     else if (event.key.toLowerCase() === 'n') { event.preventDefault(); startCall() }
     else if (event.key.toLowerCase() === 'r') void ask()
-    else if (pending && event.key >= '1' && event.key <= '3') { const option = state.proposals[Number(event.key) - 1]; if (option) selectPlan(option.proposal_id) }
-    else if (pending && event.key.toLowerCase() === 'x') void reject()
+    else if (pending && event.key >= '1' && event.key <= '4') { const option = state.proposals[Number(event.key) - 1]; if (option) selectPlan(option.proposal_id) }
+    else if (pending && event.key.toLowerCase() === 'x') document.querySelector<HTMLButtonElement>('.decision [data-key=x]')?.click()
     else if (pending && event.key === 'Enter' && !onControl && !isStale(state) && Date.now() - shownAt.current > 800)
       document.querySelector<HTMLButtonElement>('.decision .approve')?.click()
   }
@@ -237,12 +237,12 @@ function App() {
     <main className="center" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${dockHeight}px` }}>
       <div className="map-pane">
         {geometry && geometry.network === state.network ? <CityMap key={run} geometry={geometry} state={state} proposal={plan} selected={selected} onSelect={(id) => { if (id) select(id); else setSelected(null) }}
-          edge={edge} onEdge={setEdge} onMenu={openMenu} onMapMenu={mapMenu} satellite={satellite}
+          edge={edge} onEdge={(id) => { if (closing && id) { setClosing(false); void inject('road_closure', id) } else setEdge(id) }} onMenu={openMenu} onMapMenu={mapMenu} satellite={satellite} closing={closing}
           draft={draft} picking={logging} onPick={setDraft} focus={focus}/> : <p className="empty">Loading the map</p>}
         {logging && geometry ? <NewCall geometry={geometry} point={draft} busy={Boolean(busy)} onClose={stopCall} onSubmit={(call) => void logCall(call)}
           onPoint={(point, show) => { setDraft(point); if (show) setFocus({ at: point, key: Date.now() }) }}/>
         : <Inspector state={state} geometry={geometry} place={place} selected={selected} edge={edge} busy={Boolean(busy)} onEvent={(kind, ref) => void inject(kind, ref)} onClose={() => { setSelected(null); setEdge(null) }}/>}
-        {plan && !isStale(state) && planActions(plan, state.world).length > 0 && <p className="map-key"><i/>Suggested by the AI</p>}
+        {plan && !isStale(state) && (planActions(plan, state.world).length > 0 || plan.reroutes.length > 0) && <p className="map-key"><i/>Suggested by the AI</p>}
       </div>
       <Splitter axis="y" value={dockHeight} min={110} max={480} invert onChange={setDockHeight}/>
       <section className="pane dock">
@@ -254,7 +254,8 @@ function App() {
     </main>
     <Splitter axis="x" value={rightWidth} min={360} max={620} invert onChange={setRightWidth}/>
     <Agent key={run} state={state} geometry={geometry} place={place} plan={plan} busy={busy === 'other' ? null : busy} offline={offline}
-      onPlan={selectPlan} onApprove={(signals) => void approve(signals)} onReject={() => void reject()} onAsk={() => void ask()} onSelect={(id) => { setEdge(null); setSelected(id) }}
+      onPlan={selectPlan} onApprove={(signals, chosen) => void approve(signals, chosen)} onReject={() => void reject()} onAsk={() => void ask()} onSelect={(id) => { setEdge(null); setSelected(id) }}
+      onEvent={(kind, ref) => void inject(kind, ref)} onNewCall={() => startCall()} closing={closing} onCloseRoad={() => { stopCall(); setSelected(null); setClosing(!closing) }}
       onInterpret={(message) => send<Interpretation>('/api/events/interpret', { message }, 'report')}
       onReport={async (id) => Boolean(await command('/api/events', { trigger: 'report', report_id: id }, 'plan'))}/>
     <footer className="status">

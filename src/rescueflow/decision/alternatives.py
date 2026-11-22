@@ -11,28 +11,32 @@ from __future__ import annotations
 
 import math
 import random
+import uuid
 from dataclasses import dataclass, field
 
 from rescueflow.interfaces.protocols import TravelTimeProvider
 from rescueflow.models.core import (
     Event,
+    FeasibilityReport,
     PlanProposal,
+    ScoreBreakdown,
     StopKind,
     TaskKind,
     TaskPriority,
     TaskStatus,
+    VehicleStatus,
     WorldState,
 )
 from rescueflow.planning.baseline import BaselinePlanner
 from rescueflow.planning.insertion import lock_serving, refresh_schedules
 from rescueflow.planning.optimized import OptimizedPlanner, plan_outcome_signature
-from rescueflow.planning.queue_dispatch import CentralQueuePlanner, estimated_waiting_etas, is_call, waiting_calls
-from rescueflow.planning.scoring import LATENESS_WEIGHTS
-from rescueflow.planning.validator import merged_vehicle_stops
+from rescueflow.planning.queue_dispatch import CentralQueuePlanner, estimated_waiting_etas, is_call, is_ready, waiting_calls
+from rescueflow.planning.scoring import LATENESS_WEIGHTS, compute_score
+from rescueflow.planning.validator import DefaultPlanValidator, merged_vehicle_stops
 
 MAX_OPTIONS = 3
 RESPONSE_CAP_S = 900.0
-OPTION_IDS = ("A", "B", "C")
+OPTION_IDS = ("A", "B", "C", "D")
 
 STRATEGIES = {
     "urgent_first": "Fleet-wide re-plan: most urgent work first, may reassign unstarted tasks",
@@ -40,9 +44,13 @@ STRATEGIES = {
     "nearest_free_unit": "Conventional: nearest free unit, existing assignments untouched",
     "waiting_queue": "Central queue: free units take the most urgent calls now; other calls wait for the first "
                      "unit that frees up",
+    "keep": "Keep the current plan: no unit changes, open calls wait for the first unit that frees up",
 }
 OFFERED = ("urgent_first", "minimum_disruption", "waiting_queue")
 # The option set of the published A1/A2/R1 runs, kept so they can be replayed.
+# The dashboard also offers to change nothing. It comes last, so it is dropped when
+# another strategy already arrives at "no change".
+DASHBOARD = (*OFFERED, "keep")
 RECORDED = ("urgent_first", "minimum_disruption", "nearest_free_unit")
 
 
@@ -54,6 +62,12 @@ class Alternative:
     metrics: dict
     signal_priority_units: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    arrivals: dict[str, dict] = field(default_factory=dict)
+    """Expected next arrival per open job (shown to the dispatcher, not sent to the AI)."""
+
+    @property
+    def keeps(self) -> bool:
+        return not self.proposal.vehicle_plans
 
     @property
     def description(self) -> str:
@@ -86,9 +100,48 @@ def _run_strategy(
     if strategy == "nearest_free_unit":
         planner = BaselinePlanner(travel, solve_budget_s=budget_s, nearest_available_emergency=True, retry_unserved=True)
         return planner.baseline_repair(planning, event)
+    if strategy == "keep":
+        return _keep(planning, event)
     if strategy == "waiting_queue":
         return CentralQueuePlanner(travel, solve_budget_s=budget_s).plan(planning, event)
     return OptimizedPlanner(travel, solve_budget_s=budget_s, fastest_critical=fastest_critical).optimized_repair(planning, event, [strategy])[0]
+
+
+def _keep(planning: WorldState, event: Event | None) -> PlanProposal:
+    proposal = PlanProposal(
+        proposal_id=f"keep-{uuid.uuid4().hex[:8]}", based_on_plan_revision=planning.plan_revision,
+        proposed_at_sim_s=planning.sim_time_s, policy="b1", profile="minimum_disruption",
+        triggering_event_id=event.event_id if event else None, vehicle_plans=[], changed_task_ids=[],
+        unserved_task_ids=[], feasibility=FeasibilityReport(feasible=True), score=ScoreBreakdown(),
+        explanation="Keep the current plan.",
+    )
+    proposal.score = compute_score(planning, proposal, merged_vehicle_stops(planning, proposal))
+    proposal.feasibility = DefaultPlanValidator().validate(planning, proposal)
+    return proposal
+
+
+def expected_arrivals(planning: WorldState, proposal: PlanProposal, travel: TravelTimeProvider) -> dict[str, dict]:
+    """Per open job: the unit, its next stop for the job, seconds until it arrives there, and at the job's last stop."""
+    now = planning.sim_time_s
+    merged = merged_vehicle_stops(planning, proposal)
+    found: dict[str, dict] = {}
+    for vehicle_id, stops in merged.items():
+        if planning.vehicles[vehicle_id].status == VehicleStatus.broken:
+            continue
+        for stop in stops:
+            if stop.task_id and stop.service_completed_at_s is None and stop.arrival_s is not None:
+                eta = round(max(0.0, stop.arrival_s - now), 1)
+                found.setdefault(stop.task_id, {"unit": vehicle_id, "stop": stop.kind.value, "eta_s": eta})["done_s"] = eta
+    waiting = [t for t in waiting_calls(planning) if t.id not in found and t.id not in proposal.unserved_task_ids]
+    for task_id, arrival in estimated_waiting_etas(planning, travel, merged, waiting).items():
+        found[task_id] = {"unit": None, "stop": "pickup", "eta_s": round(max(0.0, arrival - now), 1), "done_s": None}
+    return found
+
+
+def current_arrivals(world: WorldState, travel: TravelTimeProvider, serving: dict[str, float]) -> dict[str, dict]:
+    planning = planning_copy(world, travel, serving)
+    refresh_schedules(planning, travel, serving)
+    return expected_arrivals(planning, _keep(planning, None), travel)
 
 
 def measure(world: WorldState, proposal: PlanProposal, travel: TravelTimeProvider | None = None) -> dict:
@@ -204,7 +257,7 @@ def _warnings(world: WorldState, metrics: dict) -> list[str]:
 def generate_alternatives(
     world: WorldState, travel: TravelTimeProvider, event: Event | None = None, *,
     strategies: tuple[str, ...] = OFFERED,
-    budget_s: float = 5.0, route_check=None, serving: dict[str, float] | None = None,
+    budget_s: float = 5.0, route_check=None, serving: dict[str, float] | None = None, limit: int = MAX_OPTIONS,
 ) -> tuple[list[Alternative], list[str]]:
     """Up to three distinct feasible alternatives, plus notes on rejected ones.
 
@@ -242,11 +295,29 @@ def generate_alternatives(
                 continue
         seen.add(signature)
         metrics = measure(planning, proposal, travel if "waiting_queue" in strategies else None)
+        if strategy == "keep":
+            # Open transfers are not in anyone's plan; say so instead of hiding it.
+            metrics["unserved_task_ids"] = sorted(
+                t.id for t in planning.tasks.values()
+                if t.status in (TaskStatus.pending, TaskStatus.unserved) and not is_call(t))
+            # Nor does keeping the plan send a unit that is free right now.
+            ignored = [t for t in waiting_calls(planning) if any(is_ready(planning, v, t) for v in planning.vehicles.values())]
+            metrics["unserved_task_ids"] = sorted([*metrics["unserved_task_ids"], *(t.id for t in ignored)])
+            metrics["unserved_critical"] += sum(t.priority == TaskPriority.critical for t in ignored)
+            metrics["waiting_call_ids"] = [t for t in metrics["waiting_call_ids"] if t not in metrics["unserved_task_ids"]]
+            for task in ignored:
+                metrics["critical_response_eta_s"].pop(task.id, None)
+                if task.id in metrics["call_response_s"]:
+                    metrics["call_response_s"][task.id] = RESPONSE_CAP_S
+            responses = list(metrics["call_response_s"].values())
+            metrics["mean_call_response_s"] = round(sum(responses) / len(responses), 1) if responses else None
         options.append(Alternative(
             option_id=OPTION_IDS[len(options)], strategy=strategy, proposal=proposal, metrics=metrics,
             signal_priority_units=_signal_priority_units(planning, proposal), warnings=_warnings(planning, metrics),
+            arrivals={k: v for k, v in expected_arrivals(planning, proposal, travel).items()
+                      if k not in metrics["unserved_task_ids"]} if "waiting_queue" in strategies else {},
         ))
-        if len(options) == MAX_OPTIONS:
+        if len(options) == limit:
             break
     # Deterministic shuffle so a strategy has no fixed letter or position
     # that a model could favour.

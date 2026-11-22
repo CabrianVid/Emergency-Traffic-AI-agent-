@@ -93,6 +93,20 @@ def _apply_vehicle_breakdown(world: WorldState, event) -> None:
             TaskStatus.picked_up,
             TaskStatus.en_route_dropoff,
         )
+        if patient_physically_aboard and event.payload.get("patient_transfer"):
+            # Opt-in (dashboard): a second unit may take the patient over. It only
+            # happens if the dispatcher approves a plan that contains it.
+            transfer = task.model_copy(update={
+                "id": f"{task.id}-RECOVERY", "pickup_node": vehicle.node_id, "created_at_s": world.sim_time_s,
+                "priority": TaskPriority.high if task.priority == TaskPriority.routine else task.priority,
+                "load_seconds": RECOVERY_TRANSFER_SECONDS, "status": TaskStatus.pending, "assigned_vehicle_id": None,
+                "earliest_pickup_s": None, "latest_pickup_s": None, "time_window_hard": False, "superseded_by": None,
+            })
+            world.tasks[transfer.id] = transfer
+            task.status = TaskStatus.interrupted
+            task.superseded_by = transfer.id
+            task.assigned_vehicle_id = None
+            continue
         if patient_physically_aboard:
             # Never invent a mid-transport patient handoff -- escalate.
             task.status = TaskStatus.requires_operator_intervention

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { clock, isStale, needsUnit, nextStop, openTasks, plannedArrival, deadline, planActions, planHeadline, priorityRank, strategyLabels, timeOfDay, unitColor, unitState, words } from './model'
+import { clock, isStale, needsUnit, nextStop, openTasks, plannedArrival, deadline, planActions, planHeadline, priorityRank, shortId, timeOfDay, unitColor, unitState, words } from './model'
 import type { Geometry, Interpretation, Place, Proposal, Recommendation, Snapshot, World } from './model'
 import { logEntries, triggerOf } from './log'
 
 interface Props {
   state: Snapshot; geometry: Geometry | null; place: Place; plan?: Proposal; busy: string | null; offline: boolean
-  onPlan: (id: string) => void; onApprove: (signals: boolean) => void; onReject: () => void; onAsk: () => void
+  onPlan: (id: string) => void; onApprove: (signals: boolean, plan: Proposal) => void; onReject: () => void; onAsk: () => void
   onInterpret: (message: string) => Promise<Interpretation | undefined>; onReport: (id: string) => Promise<boolean>
   onSelect: (id: string) => void
+  onEvent: (kind: string, ref: string | null) => void; onNewCall: () => void; onCloseRoad: () => void; closing: boolean
 }
 
 /** The mark that identifies everything the AI proposes. */
@@ -57,19 +58,39 @@ function tradeoff(plan: Proposal, best: Proposal) {
   return parts.join(', ') || 'Similar result, different units'
 }
 
-function Actions({ plan, world, place, onSelect }: { plan: Proposal; world: World; place: Place; onSelect: (id: string) => void }) {
-  const actions = planActions(plan, world)
-  if (!actions.length) return null
-  return <ol className="actions">{actions.map((action) => {
-    const task = world.tasks[action.task]
-    return <li key={action.task}>
-      <button className="callsign" style={{ background: unitColor(action.unit) }} onClick={() => onSelect(action.unit)}>{action.unit}</button>
-      <span className="to">▸</span>
-      <button onClick={() => onSelect(action.task)}><b className={`prio p${task ? priorityRank(task) : 3}`}>{task ? priorityRank(task) : ''}</b>{action.task}</button>
-      <span className="where">{task ? place(task.pickup_node) : ''}{action.from && <em> was {action.from}</em>}</span>
-      <time title="Estimated arrival">{action.arrival != null ? clock(Math.max(0, action.arrival - world.sim_time_s)) : '–'}</time>
-    </li>
-  })}</ol>
+/** Jobs worth showing for a decision: what triggered it, and what the plan moves or delays. */
+function timeRows(plan: Proposal, state: Snapshot, focus: string[]) {
+  const world = state.world!
+  const keep = state.proposals.find((p) => p.keeps)
+  const before = Object.keys(state.eta_before).length ? state.eta_before : keep?.arrivals ?? {}
+  const actions = Object.fromEntries(planActions(plan, world).map((a) => [a.task, a]))
+  const ids = new Set([...focus.flatMap((id) => [id, `${id}-RECOVERY`]), ...Object.keys(actions), ...plan.metrics.unserved_task_ids,
+    ...Object.entries(plan.arrivals).filter(([id, a]) => before[id] && (Math.abs(a.eta_s - before[id].eta_s) > 15 || Math.abs((a.done_s ?? 0) - (before[id].done_s ?? 0)) > 15)).map(([id]) => id)])
+  return [...ids].filter((id) => world.tasks[id] && !['completed', 'interrupted'].includes(world.tasks[id].status)).map((id) => {
+    const now = plan.arrivals[id]
+    const was = before[id] ?? before[id.replace(/-RECOVERY$/, '')]
+    return { id, task: world.tasks[id], unit: now?.unit ?? null, eta: now?.eta_s ?? null, from: actions[id]?.from ?? null,
+      change: now && was && was.unit !== null ? now.eta_s - was.eta_s : null, done: now?.stop === 'pickup' ? now.done_s : null,
+      doneChange: now?.done_s != null && was?.done_s != null && was.unit !== null ? now.done_s - was.done_s : null, waits: Boolean(now && now.unit === null), focus: focus.includes(id) || focus.includes(id.replace(/-RECOVERY$/, '')) }
+  }).sort((a, b) => Number(b.focus) - Number(a.focus) || priorityRank(a.task) - priorityRank(b.task) || (a.eta ?? 1e9) - (b.eta ?? 1e9)).slice(0, 6)
+}
+
+const signed = (value: number) => Math.abs(value) < 5 ? 'same' : `${value > 0 ? '+' : '−'}${clock(Math.abs(value))}`
+
+function Times({ plan, state, focus, place, onSelect }: { plan: Proposal; state: Snapshot; focus: string[]; place: Place; onSelect: (id: string) => void }) {
+  const rows = timeRows(plan, state, focus)
+  if (!rows.length) return null
+  return <table className="times"><thead><tr><th>Unit</th><th>Job</th><th>Arrives in</th><th>Change</th></tr></thead>
+    <tbody>{rows.map((row) => <tr key={row.id} className={row.focus ? 'focus' : ''}>
+      <td>{row.unit ? <button className="callsign" style={{ background: unitColor(row.unit) }} onClick={() => onSelect(row.unit!)}>{row.unit}</button>
+        : <span className="nobody">{row.waits ? 'next free' : 'nobody'}</span>}</td>
+      <td><button onClick={() => onSelect(row.id)}><b className={`prio p${priorityRank(row.task)}`}>{priorityRank(row.task)}</b>{shortId(row.id)}</button>
+        <small>{place(plan.arrivals[row.id]?.stop === 'dropoff' ? row.task.dropoff_node : row.task.pickup_node)}{row.from ? `, was ${row.from}` : ''}</small></td>
+      <td className="eta">{row.eta != null ? clock(row.eta) : '–'}{row.focus && row.done != null && <small>hospital {clock(row.done)}</small>}</td>
+      <td className={`change ${row.change == null || Math.abs(row.change) < 5 ? '' : row.change > 0 ? 'worse' : 'better'}`}>
+        {row.change == null ? '' : signed(row.change)}
+        {row.focus && row.done != null && row.doneChange != null && <small className={row.doneChange > 5 ? 'worse' : ''}>{signed(row.doneChange)}</small>}</td>
+    </tr>)}</tbody></table>
 }
 
 function Source({ recommendation, count }: { recommendation: Recommendation | null; count: number }) {
@@ -83,41 +104,73 @@ function Source({ recommendation, count }: { recommendation: Recommendation | nu
 function Decision(props: Props & { since: number }) {
   const { state, plan, busy, place, onPlan, onApprove, onReject, onAsk, onSelect, since } = props
   const world = state.world!
-  const [signals, setSignals] = useState(true)
+  const [askLights, setAskLights] = useState(false)
   const plans = state.proposals
   const best = plans.find((p) => p.recommended) ?? plans[0]
   const chosen = plan ?? best
   const single = plans.length === 1
   const byAI = state.recommendation?.source !== 'deterministic-fallback'
-  const overriding = chosen !== best
   const seconds = useTicker(since)
   const stale = isStale(state)
   const trigger = triggerOf(state)
-  return <section className="decision" aria-live="polite">
-    {trigger && <p className="trigger"><b>{trigger.title}</b><span>{trigger.tasks.map((id) => world.tasks[id] ? `${id}, ${place(world.tasks[id].pickup_node)}${state.notes[id] ? `, ${state.notes[id]}` : ''}` : id).join(' · ')}</span></p>}
-    <p className="eyebrow"><span>{single ? 'Suggestion to confirm' : byAI ? `Suggestion, ${plans.length} options` : `${plans.length} options`}</span><time title="Time since the suggestion">{clock(seconds)}</time></p>
-    <h2>{planHeadline(chosen, world)}</h2>
-    <Actions plan={chosen} world={world} place={place} onSelect={onSelect}/>
-    <ul className="why">{reasons(chosen, plans.filter((p) => p !== chosen), world).map((r) => <li key={r}>{r}</li>)}</ul>
-    {!single && <div className="options" role="radiogroup" aria-label="Plans">
-      {plans.map((option, i) => <button key={option.proposal_id} role="radio" aria-checked={option === chosen}
-        className={option === chosen ? 'chosen' : ''} onClick={() => onPlan(option.proposal_id)}>
-        <kbd>{i + 1}</kbd>
-        <span className="option-text"><strong>{strategyLabels[option.strategy] ?? words(option.strategy)}</strong>
-          <small>{option === best ? (byAI ? 'AI’s choice' : 'First by the fixed rules') : tradeoff(option, best)}</small></span>
-        <span className="option-eta"><b>{clock(option.metrics.worst_critical_response_eta_s)}</b>
-          {option.ai_probability != null && <i title={`AI preference ${Math.round(option.ai_probability * 100)}%`}><u style={{ width: `${Math.max(2, option.ai_probability * 100)}%` }}/></i>}</span>
-      </button>)}
-      <p className="options-key"><span>Number key selects</span><span>Last priority 1 patient reached · AI preference</span></p>
-    </div>}
-    {chosen.signal_priority_units.length > 0 && <label className="signals">
-      <input type="checkbox" checked={signals} onChange={(event) => setSignals(event.target.checked)}/>
-      Clear traffic lights for {list(chosen.signal_priority_units)}</label>}
-    {stale && <p className="notice">The situation changed. Updating the suggestion…</p>}
+  const road = trigger.kind === 'road_closure'
+  const keep = plans.find((p) => p.keeps)
+  // What the times in the list are about: the trigger, or every open priority 1 patient.
+  const named = trigger.tasks.filter((id) => world.tasks[id] || world.tasks[`${id}-RECOVERY`])
+  const carried = trigger.units.flatMap((unit) => Object.entries(state.eta_before).filter(([, a]) => a.unit === unit).map(([id]) => id))
+  const focus = named.length ? named : carried.length ? carried.slice(0, 3) : Object.keys(best.metrics.critical_response_eta_s)
+  const etaOf = (option: Proposal) => focus.flatMap((id) => [id, `${id}-RECOVERY`]).filter((id) => option.arrivals[id])
+    .sort((a, b) => priorityRank(world.tasks[a]) - priorityRank(world.tasks[b])).slice(0, 2).map((id) => {
+      const [now, was] = [option.arrivals[id], state.eta_before[id]]
+      // A closed road beyond the patient changes the time to hospital, not to the patient.
+      const later = road && was && now.done_s != null && Math.abs(now.eta_s - was.eta_s) < 5
+      return { id, label: later && now.stop === 'pickup' ? `${shortId(id)} to hospital` : shortId(id), eta_s: later ? now.done_s! : now.eta_s }
+    })
+  const newLights = chosen.signal_priority_units.filter((unit) => chosen.lights[unit] > 0)
+  const blocked = Boolean(busy) || stale || props.offline
+
+  function decide(option: Proposal) {
+    if (option.signal_priority_units.some((unit) => option.lights[unit] > 0)) { onPlan(option.proposal_id); setAskLights(true) }
+    else onApprove(false, option)
+  }
+  if (askLights) return <section className="decision" aria-live="polite">
+    <p className="trigger"><b>Plan chosen</b><span>{planHeadline(chosen, world)}</span></p>
+    <p className="eyebrow"><span>One more question</span></p>
+    <h2>Turn the traffic lights green for {list(newLights)}?</h2>
+    <table className="times"><thead><tr><th>Unit</th><th>Going to</th><th>Lights</th><th>Arrives in</th></tr></thead><tbody>
+      {newLights.map((unit) => { const [id, next] = Object.entries(chosen.arrivals).find(([, a]) => a.unit === unit) ?? ['', null]; return <tr key={unit} className="focus">
+        <td><span className="callsign" style={{ background: unitColor(unit) }}>{unit}</span></td>
+        <td>{id && world.tasks[id] ? <><b className={`prio p${priorityRank(world.tasks[id])}`}>{priorityRank(world.tasks[id])}</b> {shortId(id)}</> : ''}</td>
+        <td className="eta">{chosen.lights[unit]}</td><td className="change">{next ? clock(next.eta_s) : ''}</td></tr> })}</tbody></table>
+    <p className="hint">Each light turns green shortly before the ambulance arrives and returns to normal after it passes. Cross traffic waits meanwhile.</p>
     <div className="decide">
-      <button className="approve" disabled={Boolean(busy) || stale || props.offline} onClick={() => onApprove(signals && chosen.signal_priority_units.length > 0)}>
-        {single ? 'Confirm' : overriding ? `Approve option ${plans.indexOf(chosen) + 1}` : 'Approve'}<kbd>Enter</kbd></button>
-      <button disabled={Boolean(busy)} onClick={onReject}>Reject<kbd>X</kbd></button>
+      <button className="approve" disabled={blocked} onClick={() => onApprove(true, chosen)}>Yes, turn green<kbd>Enter</kbd></button>
+      <button data-key="x" disabled={blocked} onClick={() => onApprove(false, chosen)}>No, normal lights<kbd>X</kbd></button>
+      <button disabled={Boolean(busy)} onClick={() => setAskLights(false)}>Back</button>
+    </div>
+  </section>
+  return <section className="decision" aria-live="polite">
+    {trigger.title && <p className="trigger"><b>{trigger.title}</b><span>{named.map((id) => world.tasks[id] ? `${id}, ${place(world.tasks[id].pickup_node)}${state.notes[id] ? `, ${state.notes[id]}` : ''}` : id).join(' · ')}{road && !named.length ? `on the path of ${list(trigger.units)}` : ''}</span></p>}
+    <p className="eyebrow"><span>{trigger.question}</span><time title="Time since the question">{clock(seconds)}</time></p>
+    <h2>{planHeadline(chosen, world)}</h2>
+    <Times plan={chosen} state={state} focus={focus} place={place} onSelect={onSelect}/>
+    <ul className="why">{reasons(chosen, plans.filter((p) => p !== chosen), world).map((r) => <li key={r}>{r}</li>)}</ul>
+    {!single && <div className="options" role="radiogroup" aria-label="Options">
+      {plans.map((option, i) => { const etas = etaOf(option); return <button key={option.proposal_id} role="radio" aria-checked={option === chosen}
+        className={`${option === chosen ? 'chosen' : ''} ${option === best ? 'best' : ''}`} onClick={() => onPlan(option.proposal_id)}>
+        <kbd>{i + 1}</kbd>
+        <span className="option-text"><strong>{planHeadline(option, world)}</strong>
+          <small>{option === best ? (byAI ? `AI’s choice${option.ai_probability != null ? `, ${Math.round(option.ai_probability * 100)}%` : ''}` : 'First by the fixed rules') : tradeoff(option, best)}</small></span>
+        <span className="option-eta">{etas.length ? etas.map((eta) => <span key={eta.id}><b>{clock(eta.eta_s)}</b><small>{eta.label}</small></span>) : <span><b>–</b><small>no unit</small></span>}</span>
+      </button> })}
+      <p className="options-key"><span>Number key views an option</span><span>Expected arrival</span></p>
+    </div>}
+    {stale && <p className="notice">The situation changed. Updating the options…</p>}
+    <div className="decide">
+      <button className="approve" disabled={blocked} onClick={() => decide(chosen)}>
+        {chosen.keeps ? (chosen.reroutes.length ? 'Reroute' : 'Keep the plan') : single ? 'Confirm' : chosen === best ? 'Approve' : `Approve option ${plans.indexOf(chosen) + 1}`}<kbd>Enter</kbd></button>
+      {keep && keep !== chosen ? <button data-key="x" disabled={blocked} onClick={() => decide(keep)}>{keep.reroutes.length ? 'Reroute only' : 'Keep plan'}<kbd>X</kbd></button>
+        : !keep && <button data-key="x" disabled={Boolean(busy)} onClick={onReject}>Decide later<kbd>X</kbd></button>}
       <button disabled={Boolean(busy)} onClick={onAsk}>Recalculate<kbd>R</kbd></button>
     </div>
     <Source recommendation={state.recommendation} count={plans.length}/>
@@ -149,6 +202,8 @@ function Watching({ state, geometry, place, busy, onAsk, onSelect }: Props) {
       {risks.length > 0 && <button className="approve" disabled={Boolean(busy)} onClick={onAsk}>Look for a better plan<kbd>R</kbd></button>}
     </>}
     <ul className="watchlist">
+      {Object.entries(state.review_at).map(([id, at]) => <li key={`review-${id}`} className="checking"><button onClick={() => onSelect(id)}>{shortId(id)}</button>
+        <span>{world.tasks[id]?.assigned_vehicle_id ? `${world.tasks[id].assigned_vehicle_id} on the way, ` : 'no unit, '}I look again in</span><time>{clock(Math.max(0, at - now))}</time></li>)}
       {risks.map(({ task, late }) => <li key={task.id} className="risk"><button onClick={() => onSelect(task.id)}>{task.id}</button><span>expected {clock(late)} after its deadline</span></li>)}
       {next.map(({ unit, stop, at }) => <li key={unit.id}><button onClick={() => onSelect(unit.id)}>{unit.id}</button>
         <span>{unitState(unit, state, geometry).key === 'hospital' ? 'handing over at ' : unitState(unit, state, geometry).key === 'scene' ? 'on scene, ' : stop.kind === 'pickup' ? `to ${stop.task_id}, ` : `brings ${stop.task_id} to `}{place(stop.node_id)}</span>
@@ -164,6 +219,22 @@ function useTicker(since: number) {
     return () => window.clearInterval(timer)
   }, [])
   return Math.max(0, Math.round((now - since) / 1000))
+}
+
+/** What the dispatcher can tell the AI. */
+function Tell({ state, geometry, busy, offline, onEvent, onNewCall, onCloseRoad, closing }: Props) {
+  const [asking, setAsking] = useState<'breakdown' | 'vehicle_delay' | null>(null)
+  const units = Object.values(state.world!.vehicles).filter((unit) => unit.status !== 'broken')
+  const blocked = Boolean(busy) || offline
+  return <div className="tell">
+    {asking ? <><span>{asking === 'breakdown' ? 'Which unit broke down?' : 'Which unit is 2 min late?'}</span>
+      {units.map((unit) => <button key={unit.id} className="callsign" style={{ background: unitColor(unit.id) }} disabled={blocked}
+        title={unitState(unit, state, geometry).label} onClick={() => { setAsking(null); onEvent(asking, unit.id) }}>{unit.id}</button>)}
+      <button onClick={() => setAsking(null)}>Cancel</button></>
+    : closing ? <><span>Click the closed road on the map</span><button onClick={onCloseRoad}>Cancel</button></>
+    : <><button disabled={blocked} onClick={onNewCall}>New emergency</button><button disabled={blocked} onClick={() => setAsking('breakdown')}>Breakdown</button>
+      <button disabled={blocked} onClick={() => setAsking('vehicle_delay')}>Delay</button><button disabled={blocked} onClick={onCloseRoad}>Road closed</button></>}
+  </div>
 }
 
 export function Agent(props: Props) {
@@ -219,6 +290,7 @@ export function Agent(props: Props) {
           <time>{timeOfDay(entry.at)}</time><b>{entry.by === 'ai' ? <Mark size={10}/> : entry.by === 'you' ? 'You' : 'Event'}</b><span>{entry.text}</span></li>)}</ul>
       </section>
     </div>
+    <Tell {...props}/>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); void send() }}>
       <textarea id="crew-report" rows={2} maxLength={1200} value={message} placeholder="Paste or type a crew report in Slovenian"
         aria-label="Crew report" onChange={(event) => setMessage(event.target.value)}

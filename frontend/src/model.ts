@@ -44,12 +44,14 @@ export interface Telemetry {
 }
 export interface Activity {
   kind: string; sim_time_s: number; message?: string; vehicle_id?: string; task_id?: string
-  stop_kind?: string; tls_id?: string; outcome?: string; impacted_tasks?: string[]
+  stop_kind?: string; tls_id?: string; outcome?: string; impacted_tasks?: string[]; units?: string[]
 }
 export interface Assignment {
   task_id: string; vehicle_id: string; previous_vehicle_id: string | null
   pickup_s: number | null; delivery_s: number | null; asset_ids: string[]
 }
+/** Per open job: its unit (none while it waits), next stop, and seconds until arrival. */
+export type Arrivals = Record<string, { unit: string | null; stop: string; eta_s: number; done_s: number | null }>
 export interface Proposal {
   proposal_id: string; policy: string; profile: string; explanation: string; based_on_plan_revision: number
   vehicle_plans: { vehicle_id: string; stops: Stop[] }[]; unserved_task_ids: string[]
@@ -57,6 +59,7 @@ export interface Proposal {
   equivalent_policies: string[]
   option_id: string; strategy: string; description: string; rank: number; recommended: boolean
   ai_probability: number | null; signal_priority_units: string[]; warnings: string[]
+  arrivals: Arrivals; keeps: boolean; reroutes: string[]; lights: Record<string, number>
   metrics: {
     critical_response_eta_s: Record<string, number>; worst_critical_response_eta_s: number | null
     unserved_task_ids: string[]; estimated_deadline_misses: string[]; reassigned_task_ids: string[]
@@ -80,7 +83,7 @@ export interface Snapshot {
   world: World | null; telemetry: Telemetry; proposals: Proposal[]; proposal_issues: string[]
   before: Record<string, Stop[]> | null; activity: Activity[]; metrics: Metrics
   recommendation: Recommendation | null; decision_mode: string; signal_priority_active: boolean
-  notes: Record<string, string>
+  notes: Record<string, string>; eta_before: Arrivals; signal_units: string[]; review_at: Record<string, number>
 }
 export interface Interpretation {
   source: string; valid: boolean; report_id: string | null; summary?: string; error?: string
@@ -93,7 +96,7 @@ export const scenarioLabels: Record<Scenario, string> = {
 }
 export const strategyLabels: Record<string, string> = {
   urgent_first: 'Most urgent first', minimum_disruption: 'Fewest changes', nearest_free_unit: 'Nearest free unit',
-  waiting_queue: 'Free units now, rest wait',
+  waiting_queue: 'Free units now, rest wait', keep: 'No change',
 }
 const priorityOrder = ['critical', 'high', 'routine']
 export const priorityRank = (task: Task) => priorityOrder.indexOf(task.priority) + 1
@@ -127,6 +130,7 @@ export const words = (value: string) => value.replaceAll('_', ' ')
 
 // -- tasks and units ------------------------------------------------------------
 export function taskLabel(task: Task) {
+  if (task.id.endsWith('-RECOVERY') && task.kind !== 'equipment_recovery') return 'Patient in broken unit'
   if (task.kind === 'equipment_recovery') return 'Equipment recovery'
   if (task.kind === 'equipment_delivery') return 'Equipment delivery'
   if (task.kind === 'urgent_response') return 'Emergency'
@@ -208,12 +212,16 @@ export function planActions(plan: Proposal, world: World): Action[] {
 export function planHeadline(plan: Proposal, world: World) {
   const actions = planActions(plan, world)
   const waiting = plan.metrics.waiting_call_ids ?? []
-  if (!actions.length) return waiting.length ? `Hold ${waiting.join(', ')} for the first free unit` : 'Keep all current assignments'
+  const open = plan.metrics.unserved_task_ids.filter((id) => world.tasks[id]?.priority === 'critical')
+  if (!actions.length && plan.reroutes.length) return `Drive ${plan.reroutes.join(', ')} around, keep all jobs`
+  if (!actions.length) return open.length ? `Send nobody to ${open.join(', ')}` : waiting.length ? `Keep the plan, ${waiting.join(', ')} waits` : 'Keep the current plan'
   const [first, second] = actions
+  const left = [...open, ...waiting].filter((id) => world.tasks[id]?.priority === 'critical')
+  const rest = left.length ? `, ${left.map(shortId).join(', ')} waits` : ''
   const lead = `${first.from ? 'Move' : 'Send'} ${first.unit} to ${first.task}`
-  if (actions.length === 1) return lead
-  if (actions.length === 2) return `${lead}, ${second.unit} to ${second.task}`
-  return `${lead}, plus ${actions.length - 1} more`
+  if (actions.length === 1) return lead + rest
+  if (actions.length === 2) return `${lead}, ${second.unit} to ${second.task}${rest}`
+  return `${lead}, plus ${actions.length - 1} more${rest}`
 }
 /** The situation moved on (a stop was completed) after these options were computed. */
 export const isStale = (state: Snapshot) =>

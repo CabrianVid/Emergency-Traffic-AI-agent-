@@ -132,9 +132,11 @@ orange: in the call list, units, map and timeline.
 
 | Control | Effect |
 |---|---|
-| Suggestion, `1`-`3` | View another option; map, timeline and lists follow |
-| Approve / Confirm (`Enter`), Reject (`X`), Recalculate (`R`) | Act on the options |
-| Clear traffic lights | Green wave for the listed units |
+| Options, `1`-`4` | Every option shows expected arrivals and the change; one option keeps the plan |
+| Approve (`Enter`), Keep plan (`X`), Recalculate (`R`) | Act on the options |
+| Traffic-light question | Asked when a priority 1 unit gets a new job: how many lights, yes or no, per unit and job |
+| Breakdown, Delay, Road closed | Tell the AI; it asks what to do, with times. A closed road asks about the reroute |
+| 30 s review | Unreached priority 1 patients are looked at again every 30 s |
 | New emergency (`N`), or right-click the map | Log where it happened (street or map), priority, what, ALS; the AI then suggests |
 | Crew report box | Text to a validated event, then "Correct, find a response" |
 | Click a unit, call or road | Details and actions; right-click for the same menu |

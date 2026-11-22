@@ -320,3 +320,20 @@ tasks, ignoring generated proposal and stop IDs.
 - Civilian traffic is simulated but not drawn. Each unit has one colour everywhere; its
   path leads to its next stop, with the arrival time there. Selecting a unit also shows, dotted,
   the rest of its work. An orange outline marks a path the AI suggests.
+
+# AI partner flows in the dashboard (2026-11-22)
+
+- **Dashboard only** (`DASHBOARD` strategies, limit 4); the benchmark's options, prompts and
+  recorded answers are unchanged. Expected arrivals are calculated and not sent to the AI.
+- **Keeping the plan is always an option when feasible.** A call it leaves while a capable
+  unit is free counts as unserved, so it cannot tie with sending that unit.
+- **A closed road asks first**: affected units are rerouted only once the dispatcher decides,
+  and every option reroutes them. If no unit's path uses the road, nothing is asked.
+- **Priority 1 review every 30 s of simulated time.** The first look asks if there is a choice;
+  later ones ask only without a unit, when late, or for a plan at least 15 s better. Other
+  checks are logged.
+- **Breakdown with a patient aboard** (opt-in `patient_transfer`, set by the dashboard) creates
+  a transfer job for another unit. It happens only if the dispatcher approves such a plan;
+  without the flag the task still escalates, as in the benchmark.
+- **Traffic-light permission covers one unit and one job** and ends with it. The question
+  states the number of lights, not a time saved: the benchmark found no measurable saving.

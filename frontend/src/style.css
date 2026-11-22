@@ -190,8 +190,8 @@ header > button[aria-label^=Close] { width: 28px; height: 26px; text-align: cent
 .agent-body { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--seat-line) transparent; }
 .agent-body > section { padding: 14px 16px 16px; border-bottom: 1px solid var(--seat-line); }
 .eyebrow { display: flex; justify-content: space-between; gap: 10px; font: 13px var(--data); color: var(--seat-ink-2); margin-bottom: 6px; }
-.decision .eyebrow span:first-child { color: var(--seat-ai); font-weight: 600; } .decision .eyebrow time { color: var(--seat-ink); font-size: 14px; }
-.agent h2 { font: 600 23px/1.18 var(--data); text-wrap: balance; } .report h2::first-letter { text-transform: uppercase; }
+.decision .eyebrow span:first-child { color: var(--seat-ai); font-weight: 600; font-size: 15px; } .decision .eyebrow time { color: var(--seat-ink); font-size: 14px; }
+.agent h2 { font: 600 21px/1.18 var(--data); text-wrap: balance; } .report h2::first-letter { text-transform: uppercase; }
 .watching h2 { font-size: 20px; } .watching > p { color: var(--seat-ink-2); margin: 4px 0 0; }
 .actions { margin: 12px -16px 0; border-top: 1px solid var(--seat-line); border-bottom: 1px solid var(--seat-line); }
 .actions li { display: grid; grid-template-columns: 30px 12px auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 16px; font-family: var(--data); }
@@ -200,14 +200,22 @@ header > button[aria-label^=Close] { width: 28px; height: 26px; text-align: cent
 .agent .prio { min-width: 18px; height: 18px; font-size: 12px; color: #000; background: #8d8d90; } .agent .prio.p1 { background: #ff6a66; } .agent .prio.p2 { background: #fff; }
 .why { margin-top: 11px; display: grid; gap: 3px; } .why li { padding-left: 15px; position: relative; } .why li::before { content: ""; position: absolute; left: 1px; top: .55em; width: 6px; height: 6px; background: var(--seat-ai); transform: rotate(45deg); }
 .options { margin-top: 14px; border: 1px solid var(--seat-line); }
-.options button { display: grid; grid-template-columns: 20px minmax(0, 1fr) 62px; align-items: center; gap: 11px; width: 100%; padding: 8px 12px; border-left: 4px solid transparent; }
+.options button { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 11px; width: 100%; padding: 8px 12px; border-left: 4px solid transparent; }
 .options button + button { border-top: 1px solid var(--seat-line); } .options button:hover { background: var(--seat-2); } .options .chosen { background: var(--seat-2); border-left-color: var(--seat-ai); }
-.option-text { display: grid; } .option-text strong { font: 600 15px var(--data); } .option-text small { font-size: 12.5px; line-height: 1.3; color: var(--seat-ink-2); } .options button:first-child small { color: var(--seat-ai); }
-.option-eta { display: grid; gap: 4px; text-align: right; font-family: var(--data); } .option-eta b { font-size: 16px; } .option-eta i { height: 4px; background: var(--seat-line); } .option-eta u { display: block; height: 100%; background: var(--seat-ai); }
-.trigger { display: flex; align-items: baseline; gap: 8px; margin: 0 -16px 12px; padding: 7px 16px; background: var(--seat-2); font: 14px var(--data); } .trigger b { color: #ff9d98; font-weight: 600; } .trigger span { color: var(--seat-ink-2); }
+.option-text { display: grid; } .option-text strong { font: 600 15px var(--data); } .option-text small { font-size: 12.5px; line-height: 1.3; color: var(--seat-ink-2); } .options .best .option-text small { color: var(--seat-ai); }
+.option-eta { display: flex; gap: 12px; text-align: right; font-family: var(--data); } .option-eta > span { display: grid; } .option-eta b { font-size: 17px; } .option-eta small { font-size: 11.5px; color: var(--seat-ink-2); }
+.trigger { display: flex; align-items: baseline; gap: 8px; margin: -14px -16px 12px; padding: 9px 16px; background: var(--seat-2); border-bottom: 1px solid var(--seat-line); font: 14px var(--data); } .trigger b { flex: none; color: #ff9d98; font-weight: 600; font-size: 15px; } .trigger span { color: var(--seat-ink-2); }
+.times { width: calc(100% + 32px); margin: 12px -16px 0; border-collapse: collapse; font-family: var(--data); border-top: 1px solid var(--seat-line); border-bottom: 1px solid var(--seat-line); }
+.times th { padding: 4px 6px; font-size: 11.5px; font-weight: 400; color: var(--seat-ink-2); text-align: left; } .times th:first-child, .times td:first-child { padding-left: 16px; width: 74px; } .times th:nth-child(n+3), .times td:nth-child(n+3) { text-align: right; white-space: nowrap; } .times th:last-child, .times td:last-child { padding-right: 16px; width: 74px; }
+.times td { padding: 4px 6px; border-top: 1px solid var(--seat-line); color: var(--seat-ink-2); } .times td button { font-weight: 700; display: inline-flex; align-items: center; gap: 6px; } .times td button:hover { text-decoration: underline; } .times .callsign { color: #fff; padding: 1px 6px; } .times small { display: block; max-width: 170px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.times .focus td { color: var(--seat-ink); background: var(--seat-2); } .times .eta { font-size: 17px; font-weight: 700; color: var(--seat-ink); } .times .eta small, .times .change small { font-weight: 400; margin-top: 1px; } .times .change { font-size: 13px; } .times .worse { color: #ff9d98; } .times .better { color: #6fdc9c; } .nobody { color: #ff9d98; font-size: 12px; }
+.hint { margin-top: 10px; color: var(--seat-ink-2); font-size: 13px; }
+.tell { flex: none; display: flex; flex-wrap: wrap; font-size: 13px; align-items: center; gap: 6px; padding: 9px 12px 0; border-top: 1px solid var(--seat-line); font-family: var(--data); } .tell span { color: var(--seat-ink-2); } .tell button { flex: 1 0 auto; text-align: center; padding: 5px 8px; border: 1px solid var(--seat-line); background: var(--seat-2); font-weight: 600; } .tell button:hover:not(:disabled) { background: var(--seat-line); } .tell .callsign { color: #fff; border-color: transparent; }
+.watchlist .checking button { color: var(--seat-ai); } .watchlist .checking time { color: var(--seat-ai); font-weight: 600; }
 .options-key { display: flex; justify-content: space-between; padding: 5px 12px; font: 11.5px var(--data); color: var(--seat-ink-2); border-top: 1px solid var(--seat-line); }
 .signals { display: flex; align-items: center; gap: 9px; margin-top: 12px; } .signals input { width: 16px; height: 16px; accent-color: var(--seat-go); margin: 0; }
 .decide { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; margin-top: 14px; }
+.decision .decide { position: sticky; bottom: 0; margin: 12px -16px 0; padding: 10px 16px; background: var(--seat); border-top: 1px solid var(--seat-line); } .decide button { white-space: nowrap; }
 .agent .decide button, .agent .approve, .composer button { display: inline-flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 40px; padding: 0 13px; font: 600 14px var(--data); border: 1px solid var(--seat-line); background: var(--seat-2); }
 .agent .decide button:hover:not(:disabled), .composer button:hover:not(:disabled) { background: var(--seat-line); }
 .agent .approve, .agent .decide .approve { background: var(--seat-ai); border-color: var(--seat-ai); color: #000; font-size: 16px; } .agent .approve:hover:not(:disabled), .agent .decide .approve:hover:not(:disabled) { background: #ffab40; }
@@ -217,7 +225,7 @@ header > button[aria-label^=Close] { width: 28px; height: 26px; text-align: cent
 .report blockquote { padding-left: 10px; border-left: 3px solid var(--seat-line); color: var(--seat-ink-2); margin-bottom: 9px; user-select: text; }
 .shared li { display: grid; grid-template-columns: 42px 40px 1fr; padding: 3px 0; font-size: 13px; color: var(--seat-ink-2); } .shared b { font: 12.5px/1.5 var(--data); } .shared time { font-family: var(--data); } .shared .you { color: var(--seat-ink); } .shared .event b { color: #ff9d98; } .shared .ai b { padding-top: 1px; }
 .agent .shared { border-bottom: 0; }
-.composer { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--seat-line); }
+.composer { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 8px 12px 10px; }
 .composer textarea { resize: none; padding: 7px 9px; background: var(--seat-2); color: var(--seat-ink); border: 1px solid var(--seat-line); border-radius: 0; font: 13.5px/1.35 var(--prose); user-select: text; } .composer textarea::placeholder { color: var(--seat-ink-2); }
 
 /* floating: menu, training session, evaluation, errors */

@@ -1,4 +1,4 @@
-import { strategyLabels, words } from './model'
+import { clock, strategyLabels, words } from './model'
 import type { Activity, Snapshot } from './model'
 
 export interface Entry { key: string; at: number; by: 'ai' | 'you' | 'event' | 'unit'; text: string }
@@ -26,13 +26,16 @@ function describe(event: Activity): { by: Entry['by']; text: string } | null {
       ? 'Found one feasible plan' : `Offered ${count} plans by fixed rules (AI unavailable)`
     return { by: 'ai', text: how }
   }
+  if (event.kind === 'review') return { by: 'ai', text: `Looked again: ${message.replace('not reached', 'still not reached')}` }
+  if (event.kind === 'review_ok') return { by: 'ai', text: `Checked, the plan is still best. ${message.replace(/(\d+) s/g, (_, n) => clock(Number(n)))}` }
+  if (event.kind === 'closure_clear') return { by: 'ai', text: 'No unit uses the closed road, nothing to change' }
   if (event.kind === 'unit_available') return { by: 'ai', text: 'A unit became free for a waiting call, plans recalculated' }
   if (event.kind === 'plan_approved') {
     const strategy = message.match(/\((\w+)\)/)?.[1] ?? ''
     const label = (strategyLabels[strategy] ?? words(strategy)).toLowerCase()
-    return { by: 'you', text: message.includes('as recommended') ? `Approved the suggestion: ${label}` : `Chose another plan: ${label}` }
+    return { by: 'you', text: strategy === 'keep' ? 'Kept the current plan' : message.includes('as recommended') ? `Approved the suggestion: ${label}` : `Chose another plan: ${label}` }
   }
-  if (event.kind === 'proposals_rejected') return { by: 'you', text: 'Rejected the suggestion' }
+  if (event.kind === 'proposals_rejected') return { by: 'you', text: 'Left the plan as it is' }
   if (event.kind === 'signal_priority_authorised') return { by: 'you', text: `Cleared traffic lights for ${message.split(' for ').at(-1)}` }
   if (event.kind === 'execution_failed') return { by: 'event', text: 'The plan could not be carried out' }
   if (event.kind in eventNames) {
@@ -46,13 +49,29 @@ function describe(event: Activity): { by: Entry['by']; text: string } | null {
   return null
 }
 
-/** What made the AI speak up, for the suggestion now on screen. */
-export function triggerOf(state: Snapshot): { title: string; tasks: string[] } | null {
+export interface Trigger { kind: string; title: string; question: string; tasks: string[]; units: string[] }
+/** What made the AI speak up, and the question it puts to the dispatcher. */
+export function triggerOf(state: Snapshot): Trigger {
   const last = state.activity.findLastIndex((event) => event.kind === 'proposals_computed')
-  const event = last > 0 ? state.activity[last - 1] : undefined
-  if (!event) return null
-  if (event.kind === 'unit_available') return { title: 'A unit is free again', tasks: [] }
-  return event.kind in eventNames ? { title: named(event), tasks: event.impacted_tasks ?? [] } : null
+  const event = state.activity.slice(0, Math.max(0, last)).findLast((e) => !e.tls_id)
+  const kind = event && (event.kind in eventNames || ['unit_available', 'review'].includes(event.kind)) ? event.kind : ''
+  const tasks = event?.impacted_tasks ?? []
+  const unit = event?.message?.match(/^(R\d+)/)?.[1] ?? ''
+  const units = event?.units ?? (unit ? [unit] : [])
+  const names = tasks.join(', ')
+  const made = (title: string, question: string): Trigger => ({ kind, title, question, tasks, units })
+  switch (kind) {
+    case 'new_urgent_task': return made('New emergency', `Who should go to ${names}?`)
+    case 'vehicle_breakdown': return made(`${unit} broke down`, names ? `Who takes over ${names}?` : 'Change the plan?')
+    case 'vehicle_delay': return made(`${unit} is delayed`, 'Wait for it, or change the plan?')
+    case 'road_closure': return made('Road closed', `Reroute ${units.join(', ')}?`)
+    case 'priority_changed': return made(`Priority changed, ${names}`, 'Change the plan?')
+    case 'destination_changed': return made(`Hospital changed, ${names}`, 'Change the plan?')
+    case 'equipment_request': return made('Equipment requested', 'Who should bring it?')
+    case 'unit_available': return made('A unit is free again', 'Send it now?')
+    case 'review': return made(`${names} not reached yet`, 'Keep going, or change the plan?')
+    default: return made('', 'Use this plan?')
+  }
 }
 
 /** Newest first: what happened, who decided it, and what units report. */

@@ -109,10 +109,11 @@ def test_structured_events_recommendation_reject_and_signal_priority(tmp_path, m
         state = event("new_emergency")
         call = next(t for t in state["world"]["tasks"] if t.startswith("CALL-"))
         options = state["proposals"]
-        assert 1 <= len(options) <= 3
+        assert 1 <= len(options) <= 4, "up to three plans, and keeping the current one"
         assert len({o["option_id"] for o in options}) == len(options)
         assert [o["rank"] for o in options] == list(range(1, len(options) + 1))
-        assert all(call in o["metrics"]["critical_response_eta_s"] for o in options)
+        assert all(call in o["metrics"]["critical_response_eta_s"] or call in o["metrics"]["unserved_task_ids"] for o in options)
+        assert all(o["arrivals"][call]["eta_s"] >= 0 for o in options if not o["keeps"]), "every plan states an expected time"
         assert client.post("/api/plans/reject").json()["proposals"] == []
 
         state = client.post("/api/plans/propose").json()

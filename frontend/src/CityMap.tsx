@@ -14,7 +14,7 @@ interface Props {
   onMapMenu: (event: React.MouseEvent, point: Point, road: string | null) => void
   /** While an emergency is being logged: its location so far, and where to report a click. */
   draft: Point | null; picking: boolean; onPick: (point: Point) => void; focus: { at: Point; key: number } | null
-  satellite: boolean
+  satellite: boolean; closing: boolean
 }
 
 /** A route as one line, shifted sideways so units on the same street stay apart. */
@@ -105,7 +105,7 @@ function streetLabels(geometry: Geometry) {
   return [...best].map(([name, value]) => ({ name, ...value })).sort((a, b) => b.length - a.length)
 }
 
-export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, onMapMenu, draft, picking, onPick, focus, satellite }: Props) {
+export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, onMapMenu, draft, picking, onPick, focus, satellite, closing }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Point>([800, 500])
   const [view, setView] = useState<{ zoom: number; center: Point } | null>(null)
@@ -226,7 +226,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
     return road.distance < Math.max(8 * u, 6) ? road.id : null
   }
 
-  return <div className={`map ${satellite ? 'satellite' : ''} ${picking ? 'picking' : ''}`} ref={box}>
+  return <div className={`map ${satellite ? 'satellite' : ''} ${picking || closing ? 'picking' : ''}`} ref={box}>
     <svg viewBox={`${origin[0]} ${origin[1]} ${size[0] * u} ${size[1] * u}`} role="img" aria-label="Live map of units, calls and hospitals"
       onPointerDown={(event) => { if (event.button === 0) drag.current = { x: event.clientX, y: event.clientY, moved: false } }}
       onPointerMove={(event) => {
@@ -240,7 +240,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
       onPointerUp={() => { window.setTimeout(() => { drag.current = null }) }}
       onPointerLeave={() => { drag.current = null }}
       onClick={(event) => {
-        if (!clicked() || (!picking && (event.target as Element).closest('.unit, .call'))) return
+        if (!clicked() || (!picking && !closing && (event.target as Element).closest('.unit, .call'))) return
         const point = pointAt(event)
         if (picking) { onPick(point); return }
         const road = roadAt(point)

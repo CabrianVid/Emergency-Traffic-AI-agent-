@@ -95,6 +95,8 @@ class TraciSimulationController:
         # Without it SUMO aborts when a planned trip departs across it. The
         # benchmark instead plans civilian routes around its closures.
         self.detour_civilians = False
+        # Opt-in (dashboard): only these units may have lights turned green for them.
+        self.signal_units: set[str] | None = None
         self._holds: dict[str, float] = {}
         self._added_at: dict[str, float] = {}
 
@@ -1106,6 +1108,8 @@ class TraciSimulationController:
         eligible: dict[str, int] = dict.fromkeys(sorted(self.priority_probe_ids & live), 0)
         for vehicle_id, vehicle in world.vehicles.items():
             if vehicle_id not in live or vehicle.status == VehicleStatus.broken:
+                continue
+            if self.signal_units is not None and vehicle_id not in self.signal_units:
                 continue
             active_task = _current_task(world, vehicle)
             if active_task is not None and active_task.priority == TaskPriority.critical:

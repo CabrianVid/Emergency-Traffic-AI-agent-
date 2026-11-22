@@ -119,6 +119,10 @@ class ProposalView(PlanProposal):
     metrics: dict
     signal_priority_units: list[str]
     warnings: list[str]
+    arrivals: dict[str, dict]
+    keeps: bool
+    reroutes: list[str]
+    lights: dict[str, int]
 
 
 class ComparisonRow(BaseModel):
@@ -153,6 +157,9 @@ class DashboardState(BaseModel):
     proposals: list[ProposalView]
     proposal_issues: list[str]
     notes: dict[str, str] = Field(default_factory=dict)
+    eta_before: dict[str, dict] = Field(default_factory=dict)
+    signal_units: list[str] = Field(default_factory=list)
+    review_at: dict[str, float] = Field(default_factory=dict)
     recommendation: dict | None = None
     decision_mode: str = ""
     signal_priority_active: bool = False

@@ -128,7 +128,7 @@ def test_delayed_unit_stands_still_for_the_reported_time(client):
 def test_priority_change_reorders_options(client):
     state = event(client, "priority_change", "T1")
     assert state["world"]["tasks"]["T1"]["priority"] == "critical"
-    assert all("T1" in o["metrics"]["critical_response_eta_s"] for o in state["proposals"])
+    assert all("T1" in o["metrics"]["critical_response_eta_s"] or "T1" in o["metrics"]["unserved_task_ids"] for o in state["proposals"])
     plan = approve(client, state)
     state = client.get("/api/state").json()
     assert state["world"]["tasks"]["T1"]["assigned_vehicle_id"] == plan["metrics"]["assignments"]["T1"]
@@ -178,3 +178,78 @@ def test_freed_unit_makes_the_dashboard_offer_options_again(client):
     runtime._trigger.fires = lambda world, decided: False
     post(client, "/api/plans/reject")
     assert step(client, 1)["proposals"] == []
+
+
+def busy_critical(client):
+    """Approve the opening plan; its critical patient T6 is then on someone's route."""
+    approve(client, post(client, "/api/plans/propose"))
+    return client.get("/api/state").json()
+
+
+def test_closed_road_asks_about_the_reroute_and_shows_the_delay(client):
+    state = busy_critical(client)
+    unit, seen = max(state["telemetry"]["fleet"].items(), key=lambda kv: len(kv[1]["route"]))
+    clear_of_junction(client, unit)
+    seen = client.get("/api/state").json()["telemetry"]["fleet"][unit]
+    closed = seen["route"][2]
+    state = post(client, "/api/events", {"trigger": "road_closure", "edge_id": closed, "duration_s": 1200})
+    assert state["demo_pause"] and state["eta_before"]
+    keep = next(o for o in state["proposals"] if o["keeps"])
+    assert unit in keep["reroutes"] and closed not in keep["routes"][unit]
+    job = next(t for t, a in keep["arrivals"].items() if a["unit"] == unit and t in state["eta_before"])
+    assert keep["arrivals"][job]["eta_s"] > 0
+    approve(client, state, lambda o: o["keeps"])
+    state = step(client, 20)
+    assert closed not in state["telemetry"]["fleet"][unit]["route"]
+
+
+def test_closing_a_road_nobody_uses_asks_nothing(client):
+    state = busy_critical(client)
+    used = {e for f in state["telemetry"]["fleet"].values() for e in f["route"]}
+    edge = next(e for e in client.get("/api/network").json()["edges"] if e not in used)
+    state = post(client, "/api/events", {"trigger": "road_closure", "edge_id": edge, "duration_s": 300})
+    assert state["proposals"] == [] and not state["demo_pause"]
+    assert state["activity"][-2]["kind"] == "closure_clear" or "closure_clear" in [e["kind"] for e in state["activity"]]
+
+
+def test_unreached_priority_one_patient_is_looked_at_again_after_30_s(client):
+    state = busy_critical(client)
+    assert "T6" in state["review_at"]
+    asked = None
+    for _ in range(8):
+        state = step(client, 5)
+        if state["proposals"]:
+            asked = state
+            break
+    assert asked, "the AI asks again about T6"
+    review = next(e for e in reversed(asked["activity"]) if e["kind"] == "review")
+    assert "T6" in review["impacted_tasks"]
+    keep = next(o for o in asked["proposals"] if o["keeps"])
+    assert keep["arrivals"]["T6"]["unit"] and len(asked["proposals"]) >= 2
+    before = asked["world"]["tasks"]["T6"]["assigned_vehicle_id"]
+    approve(client, asked, lambda o: o["keeps"])
+    state = step(client, 1)
+    assert state["world"]["tasks"]["T6"]["assigned_vehicle_id"] == before
+    assert state["proposals"] == [] and state["review_at"]["T6"] > state["world"]["sim_time_s"] + 20
+
+
+def test_breakdown_with_a_patient_aboard_offers_a_transfer(client):
+    state = busy_critical(client)
+    unit, task = next((t["assigned_vehicle_id"], t["id"]) for t in state["world"]["tasks"].values()
+                      if t["status"] == "en_route_dropoff" and t["patient_slots"])
+    clear_of_junction(client, unit)
+    state = event(client, "breakdown", unit)
+    tasks = state["world"]["tasks"]
+    assert tasks[task]["status"] == "interrupted" and tasks[task]["superseded_by"] == f"{task}-RECOVERY"
+    rescue = [o for o in state["proposals"] if o["arrivals"].get(f"{task}-RECOVERY", {}).get("unit")]
+    assert rescue and all(o["arrivals"][f"{task}-RECOVERY"]["unit"] != unit for o in rescue)
+    assert tasks[f"{task}-RECOVERY"]["assigned_vehicle_id"] is None, "no transfer without the dispatcher"
+    plan = approve(client, state, lambda o: o["option_id"] == rescue[0]["option_id"])
+    for _ in range(40):
+        state = step(client, 30)
+        if state["proposals"]:
+            approve(client, state, lambda o: o["keeps"])
+        if state["world"]["tasks"][f"{task}-RECOVERY"]["status"] in ("en_route_dropoff", "completed"):
+            break
+    assert state["world"]["tasks"][f"{task}-RECOVERY"]["status"] in ("en_route_dropoff", "completed")
+    assert state["world"]["tasks"][f"{task}-RECOVERY"]["assigned_vehicle_id"] == plan["arrivals"][f"{task}-RECOVERY"]["unit"]
