@@ -43,7 +43,8 @@ class DispatcherAgent:
                 from openai import AsyncOpenAI
             except ImportError:
                 return
-            self.client = AsyncOpenAI(timeout=7.0, max_retries=0)
+            self.client = AsyncOpenAI(timeout=7.0, max_retries=0,
+                                      default_headers={"Accept-Encoding": "gzip, deflate"})
 
     @property
     def label(self) -> str:

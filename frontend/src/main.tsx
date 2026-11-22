@@ -125,7 +125,7 @@ function Dispatch({ state, selection, selectPlan, selected, busy, error, command
         </>}
       </div>}
       <Detail state={state} selected={selected}/>
-      <div className="dispatch-label"><span>Report an unexpected event</span></div>
+      <div className="dispatch-label"><label>Report an unexpected event</label></div>
       <div className="event-grid">
         <button disabled={!ready || busy} onClick={() => trigger('new_emergency')}>New emergency</button>
         <button disabled={!ready || busy} onClick={() => trigger('equipment_request')}>Equipment needed</button>

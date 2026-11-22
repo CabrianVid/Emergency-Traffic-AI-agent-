@@ -9,6 +9,7 @@ planners' road-network ETAs (free-flow shortest path on the SUMO graph).
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 
 from rescueflow.interfaces.protocols import TravelTimeProvider
@@ -190,4 +191,9 @@ def generate_alternatives(
         ))
         if len(options) == MAX_OPTIONS:
             break
+    # Deterministic shuffle so a strategy has no fixed letter or position
+    # that a model could favour.
+    random.Random(f"{world.sim_time_s}:{world.plan_revision}:{sorted(world.tasks)}").shuffle(options)
+    for option_id, option in zip(OPTION_IDS, options):
+        option.option_id = option_id
     return options, notes

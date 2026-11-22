@@ -54,6 +54,8 @@ class Recommendation:
     usage: dict | None = None
     fingerprint: str | None = None
     explanation: str = ""
+    deterministic_choice: str | None = None
+    """What the fallback rule would have picked (to measure what the AI changes)."""
 
     @property
     def recommended(self) -> str | None:
@@ -159,7 +161,9 @@ class DecisionAgent:
             except ImportError:
                 self.unavailable_reason = "openai package is not installed"
             else:
-                self.client = OpenAI(timeout=timeout_s, max_retries=0)
+                # gzip only: httpx2 and older brotlicffi disagree on Brotli decoding.
+                self.client = OpenAI(timeout=timeout_s, max_retries=0,
+                                     default_headers={"Accept-Encoding": "gzip, deflate"})
                 if not hasattr(self.client, "decisions"):
                     self.client, self.unavailable_reason = None, "installed openai SDK has no Decisions API"
 
@@ -201,6 +205,7 @@ class DecisionAgent:
             result.fingerprint = fingerprint
             if result.is_ai:
                 self._cache_put(fingerprint, result)
+        result.deterministic_choice = min(options, key=fallback_key).option_id
         by_id = {o.option_id: o for o in options}
         if result.recommended in by_id:
             result.explanation = explain(by_id[result.recommended], options, result.source,
@@ -246,7 +251,8 @@ class DecisionAgent:
             if answer.choice not in valid:
                 error = f"model chose unknown option {answer.choice!r}"
                 break
-            ranking = sorted(valid, key=lambda oid: (oid != answer.choice, -probabilities.get(oid, 0.0), oid))
+            rule = {o.option_id: fallback_key(o) for o in options}
+            ranking = sorted(valid, key=lambda oid: (oid != answer.choice, -probabilities.get(oid, 0.0), rule[oid]))
             usage = decision.usage.model_dump() if getattr(decision, "usage", None) else None
             return Recommendation(source=SOURCE_AI, ranking=ranking, probabilities=probabilities,
                                   model=decision.model, latency_ms=round(latency, 1), usage=usage)
