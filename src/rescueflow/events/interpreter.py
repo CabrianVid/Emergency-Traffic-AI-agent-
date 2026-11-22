@@ -65,9 +65,9 @@ class RuleBasedEventInterpreter:
         validator = self._VALIDATORS.get(draft.type)
         if validator is None:
             return ValidationError(
-                code="not_implemented",
-                message=f"Event type {draft.type.value!r} has a typed data model but its execution "
-                "is planned for a later prompt (see docs/IMPLEMENTATION_STATUS.md).",
+                code="not_supported",
+                message=f"Event type {draft.type.value!r} is not part of the active application "
+                "(helicopter and hospital-capacity events were removed; see docs/DECISIONS.md).",
                 draft=draft,
             )
         return validator(self, draft, world)
@@ -200,40 +200,53 @@ class RuleBasedEventInterpreter:
         )
         return ValidatedEvent(event=event, draft=draft)
 
-    def _validate_hospital_capacity_changed(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
-        site_id = draft.payload.get("site_id")
-        if site_id not in world.receiving_sites:
-            return ValidationError(code="unknown_site", message=f"receiving site {site_id!r} is not in the world state", draft=draft)
-        slots = draft.payload.get("slots")
-        if not slots:
-            return ValidationError(code="missing_fields", message="hospital_capacity_changed payload needs non-empty 'slots'", draft=draft)
-        for slot in slots:
-            if not {"start_s", "end_s", "capacity"} <= slot.keys() or slot["start_s"] >= slot["end_s"] or slot["capacity"] < 0:
-                return ValidationError(code="invalid_slot", message=f"malformed capacity slot {slot!r}", draft=draft)
+    def _validate_destination_changed(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        task = world.tasks.get(draft.task_id or "")
+        if task is None:
+            return ValidationError(code="unknown_task", message=f"task {draft.task_id!r} is not in the world state", draft=draft)
+        if task.status in (TaskStatus.completed, TaskStatus.interrupted, TaskStatus.unserved):
+            return ValidationError(code="task_closed", message=f"{task.id} is {task.status.value}", draft=draft)
+        new_node = draft.payload.get("new_dropoff_node")
+        if not new_node or new_node == task.dropoff_node:
+            return ValidationError(code="invalid_destination",
+                                   message="destination_changed needs a different 'new_dropoff_node'", draft=draft)
+        if new_node == task.pickup_node and task.status != TaskStatus.en_route_dropoff:
+            return ValidationError(code="degenerate_task", message="new destination equals the pickup", draft=draft)
+        reason = draft.payload.get("reason", "destination changed")
         event = Event(
-            event_id=f"evt-hospital_capacity_changed-{site_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
-            type=draft.type, payload={"site_id": site_id, "slots": slots}, source_text=draft.source_text,
-            reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s, status="validated",
-            impact_summary=f"{site_id} receiving capacity changed for {len(slots)} interval(s)",
+            event_id=f"evt-destination_changed-{task.id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload={"task_id": task.id, "new_dropoff_node": new_node, "reason": reason},
+            source_text=draft.source_text, reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s,
+            status="validated", impact_summary=f"{task.id} now goes to {new_node} ({reason})",
         )
         return ValidatedEvent(event=event, draft=draft)
 
-    def _validate_helicopter_grounded(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
-        if draft.vehicle_id is None or draft.vehicle_id not in world.vehicles:
-            return ValidationError(code="unknown_vehicle", message=f"vehicle {draft.vehicle_id!r} is not in the world state", draft=draft)
-        vehicle = world.vehicles[draft.vehicle_id]
-        if vehicle.mode.value != "helicopter":
-            return ValidationError(code="not_a_helicopter", message=f"{draft.vehicle_id} is not a helicopter", draft=draft)
-        end_s = draft.payload.get("end_s")
-        cause = draft.payload.get("cause", "fog")
-        if not isinstance(end_s, (int, float)) or end_s <= draft.sim_time_s:
-            return ValidationError(code="invalid_window", message="helicopter_grounded needs 'end_s' after sim_time_s", draft=draft)
+    def _validate_equipment_request(self, draft: EventDraft, world: WorldState) -> ValidatedEvent | ValidationError:
+        payload = draft.payload
+        asset = world.assets.get(payload.get("asset_id", ""))
+        if asset is None:
+            return ValidationError(code="unknown_asset", message=f"asset {payload.get('asset_id')!r} does not exist",
+                                   draft=draft)
+        if asset.location.kind == "vehicle":
+            return ValidationError(code="asset_in_vehicle", message=f"{asset.id} is aboard {asset.location.ref_id}",
+                                   draft=draft)
+        open_statuses = (TaskStatus.completed, TaskStatus.interrupted, TaskStatus.unserved)
+        if any(t.status not in open_statuses and asset.id in t.required_asset_ids for t in world.tasks.values()):
+            return ValidationError(code="asset_already_tasked", message=f"{asset.id} already has an open task",
+                                   draft=draft)
+        if not payload.get("task_id") or payload["task_id"] in world.tasks:
+            return ValidationError(code="invalid_task_id", message="equipment_request needs a new 'task_id'", draft=draft)
+        if not payload.get("dropoff_node") or payload["dropoff_node"] == asset.location.ref_id:
+            return ValidationError(code="invalid_destination",
+                                   message="equipment_request needs a different 'dropoff_node'", draft=draft)
+        if payload.get("priority", "high") not in ("critical", "high", "routine"):
+            return ValidationError(code="invalid_priority", message="unknown priority", draft=draft)
         event = Event(
-            event_id=f"evt-helicopter_grounded-{draft.vehicle_id}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
-            type=draft.type, payload={"vehicle_id": draft.vehicle_id, "end_s": end_s, "cause": cause},
-            source_text=draft.source_text, reported_by=draft.reported_by, received_by_dispatcher_at_s=world.sim_time_s,
-            status="validated",
-            impact_summary=f"{draft.vehicle_id} grounded by {cause} until {end_s}s",
+            event_id=f"evt-equipment_request-{payload['task_id']}-{int(draft.sim_time_s)}", sim_time_s=draft.sim_time_s,
+            type=draft.type, payload=payload, source_text=draft.source_text, reported_by=draft.reported_by,
+            received_by_dispatcher_at_s=world.sim_time_s, status="validated",
+            impact_summary=f"{asset.id} must be collected at {asset.location.ref_id} and delivered to "
+            f"{payload['dropoff_node']}",
         )
         return ValidatedEvent(event=event, draft=draft)
 
@@ -255,6 +268,6 @@ RuleBasedEventInterpreter._VALIDATORS = {
     EventType.road_closure: RuleBasedEventInterpreter._validate_road_closure,
     EventType.vehicle_delay: RuleBasedEventInterpreter._validate_vehicle_delay,
     EventType.priority_changed: RuleBasedEventInterpreter._validate_priority_changed,
-    EventType.hospital_capacity_changed: RuleBasedEventInterpreter._validate_hospital_capacity_changed,
-    EventType.helicopter_grounded: RuleBasedEventInterpreter._validate_helicopter_grounded,
+    EventType.destination_changed: RuleBasedEventInterpreter._validate_destination_changed,
+    EventType.equipment_request: RuleBasedEventInterpreter._validate_equipment_request,
 }

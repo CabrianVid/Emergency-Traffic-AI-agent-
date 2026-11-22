@@ -16,7 +16,6 @@ from rescueflow.events.types import ValidatedEvent
 from rescueflow.models.core import (
     AssetLocation,
     EventType,
-    ReceivingSlot,
     ScheduledRestoration,
     Task,
     TaskKind,
@@ -201,29 +200,32 @@ def _apply_priority_changed(world: WorldState, event) -> None:
     task.priority = TaskPriority(payload["new_priority"])
 
 
-def _apply_hospital_capacity_changed(world: WorldState, event) -> None:
+def _apply_destination_changed(world: WorldState, event) -> None:
+    """The patient (or load) must go somewhere else. The task's drop-off and
+    any not-yet-served drop-off stop for it move to the new node; the unit
+    keeps its assignment and the controller reroutes it."""
     payload = event.payload
-    site = world.receiving_sites[payload["site_id"]]
-    new_slots = [ReceivingSlot(**s) for s in payload["slots"]]
-    # Replace only the slots overlapping the affected window; untouched
-    # historical/unaffected capacity elsewhere on the site is left alone.
-    window_start = min(s.start_s for s in new_slots)
-    window_end = max(s.end_s for s in new_slots)
-    kept = [s for s in site.slots if s.end_s <= window_start or s.start_s >= window_end]
-    site.slots = sorted(kept + new_slots, key=lambda s: s.start_s)
+    task = world.tasks[payload["task_id"]]
+    task.dropoff_node = payload["new_dropoff_node"]
+    for vehicle in world.vehicles.values():
+        for stop in vehicle.route_stops:
+            if stop.task_id == task.id and stop.kind.value == "dropoff" and stop.service_completed_at_s is None:
+                stop.node_id = task.dropoff_node
 
 
-def _apply_helicopter_grounded(world: WorldState, event) -> None:
+def _apply_equipment_request(world: WorldState, event) -> None:
+    """Equipment must be fetched from where it physically is and delivered."""
     payload = event.payload
-    vehicle = world.vehicles[payload["vehicle_id"]]
-    vehicle.status = VehicleStatus.weather_grounded
-    end_s = float(payload["end_s"])
-    world.scheduled_restorations.append(
-        ScheduledRestoration(
-            kind="vehicle_status", at_sim_s=end_s, target_id=vehicle.id,
-            restore_value=VehicleStatus.available.value,
-        )
+    asset = world.assets[payload["asset_id"]]
+    task = Task(
+        id=payload["task_id"], kind=TaskKind.equipment_delivery,
+        priority=TaskPriority(payload.get("priority", "high")),
+        pickup_node=asset.location.ref_id, dropoff_node=payload["dropoff_node"],
+        created_at_s=event.sim_time_s, latest_delivery_s=payload.get("latest_delivery_s"),
+        equipment_units=asset.capacity_units, required_asset_ids=[asset.id], patient_slots=0,
+        load_seconds=60.0, unload_seconds=60.0, status=TaskStatus.pending,
     )
+    world.tasks[task.id] = task
 
 
 _HANDLERS = {
@@ -232,6 +234,6 @@ _HANDLERS = {
     EventType.road_closure: _apply_road_closure,
     EventType.vehicle_delay: _apply_vehicle_delay,
     EventType.priority_changed: _apply_priority_changed,
-    EventType.hospital_capacity_changed: _apply_hospital_capacity_changed,
-    EventType.helicopter_grounded: _apply_helicopter_grounded,
+    EventType.destination_changed: _apply_destination_changed,
+    EventType.equipment_request: _apply_equipment_request,
 }

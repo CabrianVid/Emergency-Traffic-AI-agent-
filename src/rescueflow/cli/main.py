@@ -99,7 +99,7 @@ def scenario() -> None:
 @scenario.command("export")
 @click.option("--out", default=SCENARIO_FIXTURE, show_default=True)
 def scenario_export(out: str) -> None:
-    """Build the initial 5-ambulance/1-helicopter/7-task scenario and write
+    """Build the initial 5-ambulance/7-task scenario and write
     it as stable JSON, validating feasibility before writing."""
     travel = _travel()
     world = build_initial_world(travel)
@@ -332,32 +332,6 @@ def event_priority(state: str, task_id: str, new_priority: str, reason: str) -> 
     world = _load_world(state)
     draft = EventDraft(type=EventType.priority_changed, sim_time_s=world.sim_time_s, task_id=task_id,
                         payload={"new_priority": new_priority, "reason": reason}, reported_by=ReportedBy.dispatcher)
-    _apply_structured_event(state, draft)
-
-
-@event.command("hospital-capacity")
-@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
-@click.option("--site", "site_id", required=True)
-@click.option("--slots", required=True, help='JSON list, e.g. \'[{"start_s":500,"end_s":900,"capacity":0}]\'')
-def event_hospital_capacity(state: str, site_id: str, slots: str) -> None:
-    """hospital_capacity_changed: replace a receiving site's capacity over a window."""
-    world = _load_world(state)
-    draft = EventDraft(type=EventType.hospital_capacity_changed, sim_time_s=world.sim_time_s,
-                        payload={"site_id": site_id, "slots": json.loads(slots)}, reported_by=ReportedBy.dispatcher)
-    _apply_structured_event(state, draft)
-
-
-@event.command("helicopter-grounded")
-@click.option("--state", default=WORLD_STATE_PATH, show_default=True)
-@click.option("--vehicle", "vehicle_id", default="HELI_1", show_default=True)
-@click.option("--duration", "duration_s", default=3600.0, show_default=True, help="Grounding duration in simulated seconds.")
-@click.option("--cause", default="fog", show_default=True)
-def event_helicopter_grounded(state: str, vehicle_id: str, duration_s: float, cause: str) -> None:
-    """helicopter_grounded: e.g. fog, for `duration_s` simulated seconds
-    (auto-restores via WorldState.scheduled_restorations -- see `sim advance`)."""
-    world = _load_world(state)
-    draft = EventDraft(type=EventType.helicopter_grounded, sim_time_s=world.sim_time_s, vehicle_id=vehicle_id,
-                        payload={"end_s": world.sim_time_s + duration_s, "cause": cause}, reported_by=ReportedBy.dispatcher)
     _apply_structured_event(state, draft)
 
 

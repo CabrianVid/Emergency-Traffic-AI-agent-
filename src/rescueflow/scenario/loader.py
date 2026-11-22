@@ -20,7 +20,6 @@ from rescueflow.models.core import (
     FeasibilityReport,
     PlanProposal,
     ReceivingSite,
-    ReceivingSlot,
     ScoreBreakdown,
     Stop,
     StopKind,
@@ -39,11 +38,6 @@ HOSPITAL_H1 = ReceivingSite(
     id="H1",
     node_id="A6",
     accepted_task_kinds=[TaskKind.patient_transport, TaskKind.equipment_delivery, TaskKind.urgent_response],
-    slots=[
-        ReceivingSlot(start_s=0, end_s=500, capacity=3),
-        ReceivingSlot(start_s=500, end_s=900, capacity=0),
-        ReceivingSlot(start_s=900, end_s=999_999, capacity=3),
-    ],
     service_handling_s=180.0,
 )
 HOSPITAL_H2 = ReceivingSite(
@@ -138,8 +132,6 @@ def build_initial_world(
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["ALS"])
     r4 = Vehicle(id="R4", mode=VehicleMode.ambulance, status=VehicleStatus.available, node_id="F5",
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"])
-    heli = Vehicle(id="HELI_1", mode=VehicleMode.helicopter, status=VehicleStatus.available, node_id="D6",
-                   patient_capacity=1, equipment_capacity_units=1, capabilities=["ALS"])
 
     r2 = Vehicle(id="R2", mode=VehicleMode.ambulance, status=VehicleStatus.carrying, node_id="B1",
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"],
@@ -152,7 +144,7 @@ def build_initial_world(
                  patient_capacity=1, equipment_capacity_units=2, capabilities=["BLS"],
                  available_after_s=sim_time_s)
 
-    world.vehicles = {v.id: v for v in (r1, r2, r3, r4, r5, heli)}
+    world.vehicles = {v.id: v for v in (r1, r2, r3, r4, r5)}
     world.tasks = {t.id: t for t in (t1, t2, t3, t4, t5, t6, t7)}
     world.assets = {
         "K1": Asset(id="K1", capacity_units=1, location=AssetLocation(kind="vehicle", ref_id="R2"), status="in_transit"),

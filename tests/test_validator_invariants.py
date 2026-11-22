@@ -11,8 +11,6 @@ from rescueflow.models.core import (
     AssetLocation,
     FeasibilityReport,
     PlanProposal,
-    ReceivingSite,
-    ReceivingSlot,
     ScoreBreakdown,
     Stop,
     StopKind,
@@ -107,40 +105,15 @@ def test_locked_carrying_patient_leg_cannot_be_reassigned():
     assert ok_report.feasible, [i.message for i in ok_report.issues]
 
 
-def test_hospital_receiving_capacity_enforced():
-    site = ReceivingSite(id="H1", node_id="H1", slots=[ReceivingSlot(start_s=0, end_s=1000, capacity=1)])
-    t1 = Task(id="T1", kind=TaskKind.patient_transport, priority=TaskPriority.high, pickup_node="A", dropoff_node="H1",
-               created_at_s=0.0, patient_slots=1)
-    t2 = Task(id="T2", kind=TaskKind.patient_transport, priority=TaskPriority.high, pickup_node="B", dropoff_node="H1",
-               created_at_s=0.0, patient_slots=1)
-    v1 = Vehicle(id="V1", mode=VehicleMode.ambulance, node_id="A", patient_capacity=1)
-    v2 = Vehicle(id="V2", mode=VehicleMode.ambulance, node_id="B", patient_capacity=1)
-    world = WorldState(vehicles={"V1": v1, "V2": v2}, tasks={"T1": t1, "T2": t2}, receiving_sites={"H1": site})
+def test_broken_ambulance_cannot_receive_new_stops():
+    task = Task(id="T_NEW", kind=TaskKind.urgent_response, priority=TaskPriority.critical,
+                pickup_node="A", dropoff_node="B", created_at_s=0.0, patient_slots=1)
+    broken = Vehicle(id="R2", mode=VehicleMode.ambulance, node_id="A", patient_capacity=1,
+                     status=VehicleStatus.broken)
+    world = WorldState(vehicles={"R2": broken}, tasks={"T_NEW": task})
 
-    stops1 = [Stop(stop_id="a1", vehicle_id="V1", task_id="T1", kind=StopKind.pickup, node_id="A", arrival_s=0),
-              Stop(stop_id="a2", vehicle_id="V1", task_id="T1", kind=StopKind.dropoff, node_id="H1", arrival_s=100)]
-    stops2 = [Stop(stop_id="b1", vehicle_id="V2", task_id="T2", kind=StopKind.pickup, node_id="B", arrival_s=0),
-              Stop(stop_id="b2", vehicle_id="V2", task_id="T2", kind=StopKind.dropoff, node_id="H1", arrival_s=150)]
-    proposal = PlanProposal(
-        proposal_id="probe", based_on_plan_revision=0, proposed_at_sim_s=0.0, policy="b0",
-        vehicle_plans=[VehiclePlan(vehicle_id="V1", stops=stops1), VehiclePlan(vehicle_id="V2", stops=stops2)],
-        feasibility=FeasibilityReport(feasible=True), score=ScoreBreakdown(),
-    )
-    report = DefaultPlanValidator().validate(world, proposal)
-    assert report.feasible is False
-    assert any(i.code == "receiving_capacity_exceeded" for i in report.issues)
-
-
-def test_grounded_helicopter_cannot_receive_new_stops():
-    task = Task(id="T_AIR", kind=TaskKind.urgent_response, priority=TaskPriority.critical,
-                pickup_node="A", dropoff_node="B", created_at_s=0.0, patient_slots=1,
-                allowed_modes=[VehicleMode.helicopter])
-    heli = Vehicle(id="HELI_1", mode=VehicleMode.helicopter, node_id="A", patient_capacity=1,
-                    status=VehicleStatus.weather_grounded)
-    world = WorldState(vehicles={"HELI_1": heli}, tasks={"T_AIR": task})
-
-    stops = [Stop(stop_id="s1", vehicle_id="HELI_1", task_id="T_AIR", kind=StopKind.pickup, node_id="A", arrival_s=10),
-             Stop(stop_id="s2", vehicle_id="HELI_1", task_id="T_AIR", kind=StopKind.dropoff, node_id="B", arrival_s=20)]
-    report = DefaultPlanValidator().validate(world, _proposal("HELI_1", stops, world))
+    stops = [Stop(stop_id="s1", vehicle_id="R2", task_id="T_NEW", kind=StopKind.pickup, node_id="A", arrival_s=10),
+             Stop(stop_id="s2", vehicle_id="R2", task_id="T_NEW", kind=StopKind.dropoff, node_id="B", arrival_s=20)]
+    report = DefaultPlanValidator().validate(world, _proposal("R2", stops, world))
     assert report.feasible is False
     assert any(i.code == "unavailable_vehicle_assigned" for i in report.issues)

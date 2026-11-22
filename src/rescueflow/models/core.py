@@ -85,9 +85,12 @@ class EventType(str, Enum):
     new_urgent_task = "new_urgent_task"
     road_closure = "road_closure"
     priority_changed = "priority_changed"
+    vehicle_delay = "vehicle_delay"
+    destination_changed = "destination_changed"
+    equipment_request = "equipment_request"
+    # Archived (removed from the active app, kept so historical logs load).
     hospital_capacity_changed = "hospital_capacity_changed"
     helicopter_grounded = "helicopter_grounded"
-    vehicle_delay = "vehicle_delay"
     vehicle_restored = "vehicle_restored"
 
 
