@@ -2,6 +2,7 @@
 <h1 align="center">RescueFlow AI</h1>
 <p align="center"><strong>Emergency transport replanning in a live Ljubljana simulation</strong></p>
 <p align="center">
+  <a href="#demo-video">Demo video</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#watch-in-sumo-2d">SUMO 2D demo</a> ·
   <a href="#benchmark-results">Benchmark results</a> ·
@@ -11,6 +12,12 @@
 Built for Epilog’s emergency transport challenge at AdaHack 2026. RescueFlow helps a dispatcher respond when an ambulance breaks down, an urgent call arrives, or a route closes. It compares feasible changes to the current schedule and shows the expected response times and impact on existing assignments.
 
 The dispatcher approves a plan, the console logs a mock crew message, and Eclipse SUMO executes the routes. Urgent ambulances can request simulated signal priority. The Ljubljana map uses OpenStreetMap roads and a GURS orthophoto. Calls, traffic and operations are simulated. [Map data and attribution](docs/INTEGRATIONS.md#native-ljubljana-presentation)
+
+## Demo video
+
+<a href="https://www.youtube.com/watch?v=53igKEtEEZQ"><img src="https://i.ytimg.com/vi/53igKEtEEZQ/maxresdefault.jpg" width="720" alt="Watch the RescueFlow AI demo on YouTube"></a>
+
+[Watch on YouTube](https://www.youtube.com/watch?v=53igKEtEEZQ)
 
 ## Quick start
 
