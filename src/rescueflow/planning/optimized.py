@@ -170,11 +170,15 @@ class OptimizedPlanner:
         validator: DefaultPlanValidator | None = None,
         solver_log: SolverLog | None = None,
         solve_budget_s: float = DEFAULT_SOLVE_BUDGET_S,
+        *,
+        fastest_critical: bool = False,
     ) -> None:
         self.travel = travel
         self.validator = validator or DefaultPlanValidator()
         self.solver_log = solver_log
         self.solve_budget_s = solve_budget_s
+        # `urgent_first` only. Off reproduces the recorded R1/A1/A2 runs.
+        self.fastest_critical = fastest_critical
 
     def optimized_repair(
         self, world: WorldState, event: Event | None, profiles: list[str]
@@ -196,6 +200,7 @@ class OptimizedPlanner:
                 world, self.travel, self.validator, working_vehicles, order,
                 deadline_monotonic=deadline, solver_log=self.solver_log, policy="a1", profile=profile,
                 keep_priority_order=profile == "urgent_first",
+                fastest_critical=self.fastest_critical and profile == "urgent_first",
             )
 
             if profile == "minimum_disruption":

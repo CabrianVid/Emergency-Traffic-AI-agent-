@@ -17,6 +17,12 @@ from rescueflow.sumo.env import resolve_sumo_env
 pytestmark = pytest.mark.skipif(resolve_sumo_env() is None, reason="SUMO is required for the dashboard")
 
 
+def copy_city_roads(root):
+    (root / "presentation").mkdir()
+    name = "ljubljana-wide-roads.osm.gz"
+    copyfile(Path(__file__).resolve().parents[1] / "simulation" / "presentation" / name, root / "presentation" / name)
+
+
 def test_interpretation_uses_world_and_never_freezes_on_rejection(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
     with TestClient(create_app(tmp_path, "grid")) as client:
@@ -36,11 +42,7 @@ def test_interpretation_uses_world_and_never_freezes_on_rejection(tmp_path, monk
 
 def test_ljubljana_report_plan_approval_and_live_recovery(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
-    (tmp_path / "scenario").mkdir()
-    copyfile(
-        Path(__file__).resolve().parents[1] / "simulation" / "scenario" / "ljubljana-roads.osm.gz",
-        tmp_path / "scenario" / "ljubljana-roads.osm.gz",
-    )
+    copy_city_roads(tmp_path)
     with TestClient(create_app(tmp_path, "ljubljana")) as client:
         initial = client.get("/api/state").json()
         geometry = client.get("/api/network").json()
@@ -76,13 +78,13 @@ def test_ljubljana_report_plan_approval_and_live_recovery(tmp_path, monkeypatch)
         assert client.post(url, json=request).json() == approval.json()
         assert client.get("/api/notifications").json() == approval.json()["dispatch_messages"]
         assert any(message["task_id"] == "T3-RECOVERY" for message in approval.json()["dispatch_messages"])
-        for _ in range(2):
+        for _ in range(4):  # city distances
             result = client.post("/api/simulation/step", json={"steps": 550})
             assert result.status_code == 200, result.text
         after = result.json()
         assert after["world"]["tasks"]["T3-RECOVERY"]["status"] == "completed"
         assert after["world"]["assets"]["K1"]["location"]["kind"] == "hospital"
-        assert after["telemetry"]["fleet"]["R2"]["edge"] == initial["telemetry"]["fleet"]["R2"]["edge"]
+        assert after["telemetry"]["fleet"]["R2"]["edge"] == state["telemetry"]["fleet"]["R2"]["edge"]
         assert after["metrics"]["comparison"][plan["policy"]]["p90_s"] > 0
         reset = client.post("/api/simulation/reset").json()
         assert reset["run_id"] != initial["run_id"]
@@ -147,14 +149,23 @@ def test_structured_events_recommendation_reject_and_signal_priority(tmp_path, m
 
 def test_every_emergency_spot_exists_in_ljubljana(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
-    (tmp_path / "scenario").mkdir()
-    copyfile(
-        Path(__file__).resolve().parents[1] / "simulation" / "scenario" / "ljubljana-roads.osm.gz",
-        tmp_path / "scenario" / "ljubljana-roads.osm.gz",
-    )
+    copy_city_roads(tmp_path)
     with TestClient(create_app(tmp_path, "ljubljana")) as client:
         for number in range(1, 5):
             response = client.post("/api/events", json={"trigger": "event", "kind": "new_emergency", "ref": None})
             assert response.status_code == 200, response.text
             assert f"CALL-{number}" in response.json()["world"]["tasks"]
             assert response.json()["proposals"], "a unit can reach it"
+
+        # The dispatcher logs where an emergency happened; it starts at the nearest reachable junction.
+        geometry = client.get("/api/network").json()
+        node = client.get("/api/state").json()["world"]["tasks"]["CALL-2"]["pickup_node"]
+        x, y = geometry["nodes"][node]
+        call = {"trigger": "call", "x": x + 3, "y": y - 3, "priority": "high", "needs_als": True, "note": "chest pain"}
+        state = client.post("/api/events", json=call).json()
+        task = state["world"]["tasks"]["CALL-5"]
+        assert (task["pickup_node"], task["priority"], task["required_capabilities"]) == (node, "high", ["ALS"])
+        assert state["notes"] == {"CALL-5": "chest pain"} and state["demo_pause"] and state["proposals"]
+        assert task["assigned_vehicle_id"] is None, "nothing is dispatched without the dispatcher"
+        assert client.post("/api/events", json={**call, "x": 99999}).status_code == 422
+        assert client.post("/api/events", json={**call, "priority": "urgent"}).status_code == 422

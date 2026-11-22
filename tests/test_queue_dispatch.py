@@ -116,3 +116,21 @@ def test_offered_options_include_the_queue_and_leave_unchanged_units_alone():
     world.sim_time_s = 5.0
     again, _ = generate_alternatives(world, _travel())
     assert [p for o in again if o.strategy == "waiting_queue" for p in o.proposal.vehicle_plans] == []
+
+
+def test_critical_call_goes_to_the_unit_that_arrives_first_not_the_cheapest_detour():
+    """R1 could add the call cheaply after its own critical patient; R2 is only on its way to a transfer."""
+    world = WorldState(
+        vehicles={"R1": _unit("R1", "0,0"), "R2": _unit("R2", "200,0")},
+        tasks={"C1": _call("C1", "300,0"), "T": Task(
+            id="T", kind=TaskKind.patient_transport, priority=TaskPriority.high, pickup_node="900,900",
+            dropoff_node="0,0", created_at_s=0.0, patient_slots=1)})
+    options, _ = generate_alternatives(world, _travel())
+    DefaultApprovalService().approve(world, options[0].proposal, "test", "k")
+    world.tasks["C2"] = _call("C2", "0,10")
+    options, _ = generate_alternatives(world, _travel())
+    urgent = next(o for o in options if o.strategy == "urgent_first")
+    queue = [o for o in options if o.strategy == "waiting_queue"]
+    best = min(o.metrics["mean_call_response_s"] for o in options)
+    assert urgent.metrics["mean_call_response_s"] == best
+    assert not queue or queue[0].metrics["mean_call_response_s"] >= best

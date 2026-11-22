@@ -240,6 +240,15 @@ def try_insert(
     return candidates
 
 
+def _critical_pickups(world: WorldState, stops: list[Stop]) -> float:
+    """Sum of the open critical pickup times on one route."""
+    return sum(
+        s.arrival_s for s in stops
+        if s.kind == StopKind.pickup and s.service_completed_at_s is None and s.arrival_s is not None
+        and s.task_id in world.tasks and world.tasks[s.task_id].priority == TaskPriority.critical
+    )
+
+
 def greedy_insert_all(
     world: WorldState,
     travel: TravelTimeProvider,
@@ -252,6 +261,7 @@ def greedy_insert_all(
     profile: str = "",
     nearest_available_emergency: bool = False,
     keep_priority_order: bool = False,
+    fastest_critical: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Insert each task, in the given order, into the single cheapest
     feasible vehicle+position across the whole fleet, mutating
@@ -289,6 +299,14 @@ def greedy_insert_all(
                     policy, profile, task.id, vehicle.id, bool(candidates),
                     candidates[0].added_travel_s if candidates else None,
                 )
+            if candidates and fastest_critical and task.priority == TaskPriority.critical:
+                # Reach critical patients soonest, counting any delay to others on this unit.
+                before = _critical_pickups(world, vehicle.route_stops)
+                candidate = min(candidates, key=lambda c: (_critical_pickups(world, c.stops), c.added_travel_s))
+                key = (_critical_pickups(world, candidate.stops) - before, candidate.added_travel_s)
+                if best_key is None or key < best_key:
+                    best, best_key = candidate, key
+                continue
             if candidates:
                 candidate = candidates[0]
                 key = (candidate.added_travel_s,)

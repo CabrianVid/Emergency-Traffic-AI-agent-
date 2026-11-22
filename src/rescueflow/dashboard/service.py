@@ -14,15 +14,14 @@ from rescueflow.approval.service import DefaultApprovalService
 from rescueflow.dashboard.agent import DispatcherAgent, Interpretation
 from rescueflow.decision.agent import DecisionAgent
 from rescueflow.decision.alternatives import generate_alternatives
-from rescueflow.dashboard.network import LJUBLJANA_NODES, network_geometry, prepare_network
+from rescueflow.dashboard.network import CALL_SPOTS, nearest_node, network_geometry, prepare_network
 from rescueflow.dispatch.notification import MockDispatchNotificationAdapter
 from rescueflow.events.apply import apply_event
 from rescueflow.events.types import EventDraft, ValidationError
-from rescueflow.models.core import EventType, TaskPriority, TaskStatus
+from rescueflow.models.core import EventType, TaskKind, TaskPriority, TaskStatus
 from rescueflow.planning.queue_dispatch import FreeUnitTrigger, queued_behind_work, waiting_calls
 from rescueflow.scenario.loader import DefaultScenarioLoader, build_initial_world
 from rescueflow.sumo.controller import TraciSimulationController
-from rescueflow.travel import SumoTravelTimeProvider
 
 Network = Literal["ljubljana", "grid"]
 Scenario = Literal["breakdown", "urgent"]
@@ -87,18 +86,18 @@ class DispatchRun:
         self._recommendation = None
         self._options = {}
         self._event_seq = 0
+        self._notes: dict[str, str] = {}
         self._directory = self.root / "state" / "dashboard" / self.run_id
         try:
-            net, cfg = prepare_network(self.root, network)
-            self.travel = SumoTravelTimeProvider(str(net))
+            cfg, self.travel, self.nodes, self.call_nodes = prepare_network(self.root, network)
             world = build_initial_world(
-                self.travel, node_mapping=LJUBLJANA_NODES if network == "ljubljana" else None
+                self.travel, node_mapping=self.nodes
             )
             feasibility = DefaultScenarioLoader().validate(world)
             if not feasibility.feasible:
                 raise ValueError("Invalid initial schedule: " + ", ".join(i.message for i in feasibility.issues))
             self.controller = TraciSimulationController(
-                str(cfg), str(net), state_path=str(self._directory / "checkpoint.xml.gz"), allow_teleport=False,
+                str(cfg), self.travel.net_path, travel=self.travel, state_path=str(self._directory / "checkpoint.xml.gz"), allow_teleport=False,
             )
             # Commit plans while a unit crosses a junction; its route is
             # installed on the next road edge.
@@ -205,8 +204,26 @@ class DispatchRun:
             if self._script_applied:
                 raise CommandError("Reset the run to replay its scripted incident.")
             drafts = self._scripted_drafts(now)
+        state = self._apply_drafts(drafts)
+        if trigger == "report":
+            self._reports.pop(ref, None)
+        elif trigger == "scenario":
+            self._script_applied = True
+            return self.publish()
+        return state
+
+    def _apply_drafts(self, drafts: list[EventDraft]) -> dict:
+        """Validate every draft, apply them all, then compute options."""
+        world = self.require_world()
         validated = []
         for draft in drafts:
+            if draft.type == EventType.vehicle_breakdown and draft.vehicle_id in world.vehicles:
+                # SUMO cannot freeze a unit inside a junction: let it clear first.
+                for _ in range(30):
+                    if not (world.vehicles[draft.vehicle_id].sumo_edge_id or "").startswith(":"):
+                        break
+                    self.controller.step(world)
+                draft = draft.model_copy(update={"sim_time_s": world.sim_time_s})
             event = self.agent.validate_event(draft, world)
             if isinstance(event, ValidationError):
                 raise CommandError(event.message, 422)
@@ -239,16 +256,39 @@ class DispatchRun:
                 self.controller.apply_committed_plan(world, units)
             self._record(kind=event.event.type.value, message=event.event.impact_summary,
                          impacted_tasks=[task.task_id for task in impacted])
-        if trigger == "report":
-            self._reports.pop(ref, None)
-        elif trigger == "scenario":
-            self._script_applied = True
         return self.propose()
+
+    def _call_draft(self, pickup: str, priority: str, needs_als: bool, note: str = "") -> EventDraft:
+        """One emergency call. Target times to the patient are synthetic."""
+        now = self.world.sim_time_s
+        hospital = next((h for h in self.world.receiving_sites.values()
+                         if TaskKind.urgent_response in h.accepted_task_kinds and h.node_id != pickup), None)
+        if hospital is None:
+            raise CommandError("No receiving hospital is available for this location.", 422)
+        target = {"critical": 480, "high": 900, "routine": 1800}[priority]
+        payload = {
+            "task_id": f"CALL-{self._event_seq}", "pickup_node": pickup, "dropoff_node": hospital.node_id,
+            "priority": priority, "latest_pickup_s": now + target, "latest_delivery_s": now + target + 1200,
+            "required_capabilities": ["ALS"] if needs_als else [],
+        }
+        if note:
+            payload["note"] = note
+            self._notes[payload["task_id"]] = note
+        return EventDraft(type=EventType.new_urgent_task, sim_time_s=now, payload=payload)
+
+    def log_call(self, x: float, y: float, priority: str, needs_als: bool, note: str) -> dict:
+        """The dispatcher logs an emergency; it starts at the nearest reachable junction."""
+        self.require_world()
+        left, bottom, right, top = self.geometry["bounds"]
+        if not (left - 200 <= x <= right + 200 and bottom - 200 <= y <= top + 200):
+            raise CommandError("That location is outside the served area.", 422)
+        self._event_seq += 1
+        pickup = nearest_node(self.travel, self.call_nodes, x, y)
+        return self._apply_drafts([self._call_draft(pickup, priority, needs_als, note)])
 
     def _structured_draft(self, kind: str | None, ref: str | None, now: float) -> EventDraft:
         """Dashboard event buttons. `ref` is the selected unit or task."""
         world = self.world
-        node = (lambda key: LJUBLJANA_NODES[key]) if self.network == "ljubljana" else (lambda key: key)
         hospitals = list(world.receiving_sites.values())
         self._event_seq += 1
         if kind == "breakdown":
@@ -275,13 +315,9 @@ class DispatchRun:
             return EventDraft(type=EventType.destination_changed, sim_time_s=now, task_id=task.id,
                               payload={"new_dropoff_node": other, "reason": "receiving hospital changed"})
         if kind == "new_emergency":
-            # Every spot must exist on both maps.
-            spots = ("E2", "C4", "D3", "D2")
-            pickup = node(spots[(self._event_seq - 1) % len(spots)])
-            return EventDraft(type=EventType.new_urgent_task, sim_time_s=now, payload={
-                "task_id": f"CALL-{self._event_seq}", "pickup_node": pickup, "dropoff_node": hospitals[0].node_id,
-                "priority": "critical", "latest_pickup_s": now + 300, "latest_delivery_s": now + 1050,
-            })
+            spots = CALL_SPOTS[self.network]
+            pickup = self.nodes[spots[(self._event_seq - 1) % len(spots)]]
+            return self._call_draft(pickup, "critical", False)
         if kind == "equipment_request":
             free = [a for a in world.assets.values() if a.location.kind != "vehicle"
                     and not any(a.id in t.required_asset_ids and t.status not in
@@ -301,7 +337,7 @@ class DispatchRun:
         if self.scenario == "breakdown":
             return [EventDraft(type=EventType.vehicle_breakdown, sim_time_s=now, vehicle_id="R2",
                                equipment_ids_reported_stranded=["K1"])]
-        pickup = LJUBLJANA_NODES["E2"] if self.network == "ljubljana" else "E2"
+        pickup = self.nodes["E2"]
         return [EventDraft(type=EventType.new_urgent_task, sim_time_s=now, payload={
             "task_id": "URGENT", "pickup_node": pickup,
             "dropoff_node": self.world.receiving_sites["H2"].node_id,
@@ -483,6 +519,7 @@ class DispatchRun:
         telemetry = {}
         if self.controller is not None and self.world is not None and not self.error:
             telemetry = self.controller.live_telemetry(self.world)
+            telemetry["serving"] = sorted(self.controller.serving(self.world))
             for entry in self.controller.event_log[self._event_cursor:]:
                 self._record(**entry)
                 task_id = entry.get("task_id")
@@ -507,7 +544,7 @@ class DispatchRun:
             "script_applied": self._script_applied,
             "world": self.world.model_dump(mode="json") if self.world is not None else None,
             "telemetry": telemetry, "proposals": self._proposals, "proposal_issues": self._issues,
-            "recommendation": self._recommendation, "decision_mode": self.decision.label,
+            "notes": self._notes, "recommendation": self._recommendation, "decision_mode": self.decision.label,
             "signal_priority_active": bool(self.controller and self.controller.green_wave.enabled),
             "before": self._before, "activity": self._recent_activity(), "metrics": self._metrics(telemetry),
         }

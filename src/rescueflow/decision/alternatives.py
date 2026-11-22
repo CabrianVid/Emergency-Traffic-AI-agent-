@@ -80,13 +80,15 @@ def planning_copy(world: WorldState, travel: TravelTimeProvider, serving: dict[s
     return planning
 
 
-def _run_strategy(strategy: str, planning: WorldState, travel, event: Event | None, budget_s: float) -> PlanProposal:
+def _run_strategy(
+    strategy: str, planning: WorldState, travel, event: Event | None, budget_s: float, fastest_critical: bool,
+) -> PlanProposal:
     if strategy == "nearest_free_unit":
         planner = BaselinePlanner(travel, solve_budget_s=budget_s, nearest_available_emergency=True, retry_unserved=True)
         return planner.baseline_repair(planning, event)
     if strategy == "waiting_queue":
         return CentralQueuePlanner(travel, solve_budget_s=budget_s).plan(planning, event)
-    return OptimizedPlanner(travel, solve_budget_s=budget_s).optimized_repair(planning, event, [strategy])[0]
+    return OptimizedPlanner(travel, solve_budget_s=budget_s, fastest_critical=fastest_critical).optimized_repair(planning, event, [strategy])[0]
 
 
 def measure(world: WorldState, proposal: PlanProposal, travel: TravelTimeProvider | None = None) -> dict:
@@ -214,7 +216,7 @@ def generate_alternatives(
     seen, options, notes = set(), [], []
     for strategy in strategies:
         try:
-            proposal = _run_strategy(strategy, planning, travel, event, budget_s)
+            proposal = _run_strategy(strategy, planning, travel, event, budget_s, "waiting_queue" in strategies)
         except ValueError as exc:
             notes.append(f"{strategy}: {exc}")
             continue

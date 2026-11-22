@@ -93,6 +93,7 @@ def generate_routes(
     amb_depart_s: float = 0.0,
     horizon_s: float = 120.0,
     background_flows=None,
+    edge_path=None,
 ) -> dict:
     """Writes a deterministic route file: a background-traffic vType plus a
     handful of fixed-period corner-to-corner flows, and one `vClass=emergency`
@@ -103,7 +104,8 @@ def generate_routes(
     import sumolib  # noqa: PLC0415
 
     net = sumolib.net.readNet(net_path)
-    amb_edges = _edge_path_ids(net, amb_start_node, amb_dest_node)
+    path = edge_path or (lambda origin, dest: _edge_path_ids(net, origin, dest))
+    amb_edges = path(amb_start_node, amb_dest_node)
 
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<routes>"]
     lines.append('  <vType id="civilian" vClass="passenger" maxSpeed="13.9" accel="2.0" decel="4.5"/>')
@@ -125,7 +127,7 @@ def generate_routes(
 
     flows_written = []
     for i, (origin, dest, period) in enumerate(_BACKGROUND_FLOWS if background_flows is None else background_flows):
-        edges = _edge_path_ids(net, origin, dest)
+        edges = path(origin, dest)
         flow_id = f"bg{i}"
         # A `<route>` child element (not an `edges=` attribute) is required
         # for plain `sumo` -- see docs/DECISIONS.md.

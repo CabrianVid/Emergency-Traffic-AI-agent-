@@ -64,13 +64,23 @@ class RoadClosureEvent(Command):
     duration_s: float = Field(240, gt=0, le=3600)
 
 
+class CallEvent(Command):
+    """An emergency logged by the dispatcher, in network metres."""
+    trigger: Literal["call"]
+    x: float
+    y: float
+    priority: Literal["critical", "high", "routine"] = "critical"
+    needs_als: bool = False
+    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] = ""
+
+
 class StructuredEvent(Command):
     trigger: Literal["event"]
     kind: EventKind
     ref: str | None = Field(None, max_length=120)
 
 
-EventCommand = Annotated[ScenarioEvent | ReportEvent | RoadClosureEvent | StructuredEvent,
+EventCommand = Annotated[ScenarioEvent | ReportEvent | RoadClosureEvent | StructuredEvent | CallEvent,
                          Field(discriminator="trigger")]
 
 
@@ -142,6 +152,7 @@ class DashboardState(BaseModel):
     telemetry: dict
     proposals: list[ProposalView]
     proposal_issues: list[str]
+    notes: dict[str, str] = Field(default_factory=dict)
     recommendation: dict | None = None
     decision_mode: str = ""
     signal_priority_active: bool = False
@@ -264,6 +275,8 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
     async def inject(command: EventCommand):
         if isinstance(command, ReportEvent):
             return await app.state.submit(app.state.runtime.inject, command.trigger, command.report_id)
+        if isinstance(command, CallEvent):
+            return await app.state.submit(app.state.runtime.log_call, command.x, command.y, command.priority, command.needs_als, command.note)
         if isinstance(command, RoadClosureEvent):
             return await app.state.submit(app.state.runtime.inject, command.trigger, command.edge_id, command.duration_s)
         if isinstance(command, StructuredEvent):

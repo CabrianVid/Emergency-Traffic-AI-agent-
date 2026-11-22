@@ -55,6 +55,7 @@ class TraciSimulationController:
         self, sumocfg_path: str, net_path: str, state_path: str = DEFAULT_STATE_PATH,
         seed: int = 42, *, allow_teleport: bool = True,
         observations_dir: Path | None = None, junction_stops: bool = False, gui: bool = False,
+        travel: SumoTravelTimeProvider | None = None,
     ) -> None:
         self.sumocfg_path = sumocfg_path
         self.net_path = net_path
@@ -66,7 +67,7 @@ class TraciSimulationController:
         self.gui = gui
         self.priority_probe_ids: set[str] = set()
         self._connected = False
-        self._travel: SumoTravelTimeProvider | None = None
+        self._travel = travel
         self.green_wave = GreenWaveController()
         self.event_log: list[dict] = []
         self._green_wave_log_copied = 0
@@ -1073,6 +1074,7 @@ class TraciSimulationController:
         vehicle_ids = traci.vehicle.getIDList()
         fleet = {}
         civilian_count = 0
+        traffic = {}
         for vehicle_id in vehicle_ids:
             if vehicle_id in world.vehicles:
                 route_index = traci.vehicle.getRouteIndex(vehicle_id)
@@ -1084,6 +1086,8 @@ class TraciSimulationController:
                 }
             elif traci.vehicle.getTypeID(vehicle_id) == "civilian":
                 civilian_count += 1
+                x, y = traci.vehicle.getPosition(vehicle_id)
+                traffic[vehicle_id] = (round(x, 1), round(y, 1))
                 self._civilian_loss_s[vehicle_id] = traci.vehicle.getTimeLoss(vehicle_id)
         return {
             "fleet": fleet,
@@ -1094,6 +1098,7 @@ class TraciSimulationController:
                 }
                 for tls_id in traci.trafficlight.getIDList()
             },
+            "traffic": traffic,
             "civilian_active": civilian_count,
             "civilian_observed": len(self._civilian_loss_s),
             "civilian_time_loss_s": round(sum(self._civilian_loss_s.values()), 1),
