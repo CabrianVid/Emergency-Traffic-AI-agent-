@@ -50,22 +50,25 @@ OpenAI setup and the API reference.
 
 ## Watch the Ljubljana simulation in SUMO 2D
 
-From the repository root, run either command in PowerShell. The SUMO
-window starts automatically. Watch for the red-and-white ambulance at
-30 simulated seconds, and use the mouse wheel to zoom.
+A city-wide scene over a 5 × 4 km aerial photograph of Ljubljana: 10
+ambulances, 7 routine transfers, 8 emergency calls and civilian traffic,
+with UKC Ljubljana as the receiving hospital. Run each from the
+repository root in PowerShell:
 
 ```powershell
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation baseline
 ```
 
-**B0** uses normal signals. **A2** enables the green-wave controller for
-the same urgent trip, with identical routes, civilian demand and
-blue-light privileges. The map labels the active policy and shows how
-many phases were shortened. This standalone scene shows signal priority
-on real Ljubljana streets with synthetic traffic. Use the dispatcher
-workstation for assignment and plan repair. See the [runbook](docs/RUNBOOK.md)
-for presentation controls and saving the observed trip data.
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation rescueflow
+```
+
+**baseline** sends the nearest free ambulance with normal signals.
+**rescueflow** re-plans the whole fleet urgent-first and gives
+emergency runs green-wave signal priority. Both use identical inputs.
+The left panel explains the colors and shows live response times. See the
+[runbook](docs/RUNBOOK.md#native-sumo-2d-presentation) for the legend and
+reference results.
 
 ## Run the evaluation
 

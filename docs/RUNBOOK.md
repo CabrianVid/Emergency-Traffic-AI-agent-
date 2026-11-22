@@ -31,32 +31,76 @@ for supported reports. Scenario buttons always use local event drafts.
 
 ## Native SUMO 2D presentation
 
-In PowerShell at the repository root, run one policy at a time.
+A city-wide Ljubljana scene (about 5 x 4 km: Šiška, Bežigrad, Center,
+Tabor, Moste, Trnovo, Vič) with 10 ambulances, 7 routine transfers,
+8 emergency calls over 11.5 minutes and about 430 civilian trips. Run one
+policy at a time from the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation baseline
 ```
-
-Playback starts automatically. The red-and-white ambulance is scheduled
-at simulated second 30. Gold, mint and blue cars are civilian traffic.
-The signal bars show the actual signal states. A2's overlay counts
-recorded phase shortenings from the controller. Use the mouse wheel to
-zoom, drag to pan, or adjust **Delay (ms)** for a slower view. At the end
-of 160 simulated seconds the window closes and the terminal prints the
-observed ambulance drive time and signal activity. Run the command again
-to replay.
-
-Use `--output` to save observations and `--headless` to omit the window.
 
 ```powershell
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0 --headless --output simulation/state/presentation/B0
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2 --headless --output simulation/state/presentation/A2
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation rescueflow
 ```
 
-The sampled trip and demand are fixed in both modes. This scene
-demonstrates the signal-priority feature on one corridor. The matched
-multi-seed evidence remains in [EXPERIMENTS.md](EXPERIMENTS.md).
+`baseline` is B0: the nearest immediately free ambulance and normal
+signals. `rescueflow` is A3: fleet-wide urgent-first re-planning (A1)
+plus green-wave signal priority. `A1` and `A2` isolate one upgrade each.
+Both runs use the same fleet, routine schedule, calls, civilian trips,
+blue-light physics and 25 s approval-plus-mobilization delay. Every call
+is planned by the real planner and committed through the real approval
+service, so the units on screen move because a plan was approved.
+
+How to read the window:
+
+- **Left panel**: policy, legend, simulated clock, calls waiting and
+  reached, average and worst response, green-wave count and the latest
+  dispatcher event.
+- **Red cross**: UKC Ljubljana, the receiving hospital for every patient.
+  **Blue house icons**: ambulance stations (Center, Bežigrad, Vič).
+- **Pulsing red circle**: an emergency call waiting for an ambulance. It
+  turns green when a unit arrives and grey once the patient is at UKC.
+- **Ambulance colors**: red = emergency run with blue lights, orange =
+  emergency patient on the way to UKC, blue = routine transfer without
+  siren, grey = free unit. Small beige cars are civilian traffic.
+- **Green dot "GREEN WAVE for Rx"**: a signal phase shortened for that
+  unit (RescueFlow and A2 only).
+
+Playback takes about 2–3 minutes at the default `--delay 60` (ms per
+simulated second). Use `--delay 20` for faster playback or the GUI's
+**Delay** box. The window closes at 30:00 simulated time and the
+terminal prints each call's response time.
+
+Reference results on SUMO 1.28.0 (headless, repeated three times for
+RescueFlow with identical results):
+
+| | Baseline (B0) | RescueFlow (A3) |
+|---|---:|---:|
+| Average response (report to first unit on scene) | 7:35 | 3:38 |
+| Worst response | 14:37 | 7:29 |
+| Calls reached within 5:00 | 2/8 | 6/8 |
+| Routine transfers late or unfinished | 0/7 | 4/7 |
+| Green-wave phase shortenings | 0 | 6 |
+| Civilian mean time loss | 168 s | 199 s |
+
+Baseline keeps routine work untouched and sends whichever unit is free,
+so calls that arrive after the three spare units are busy wait 13–14
+minutes. RescueFlow diverts units that have not yet picked up a routine
+patient, which shortens emergency response but delays routine transfers.
+This is one illustrative synthetic scenario, not the matched benchmark.
+GUI runs can differ by a few seconds from headless runs.
+
+Use `--output` to keep observations and `--headless` to omit the window:
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation baseline --headless --output simulation/state/presentation/B0
+```
+
+Each output directory contains `summary.json`, `events.jsonl` (planner,
+approval, stop and signal events), `tripinfo.xml`, `routes.xml` and
+`warnings.log`. The matched multi-seed evidence is in
+[EXPERIMENTS.md](EXPERIMENTS.md).
 
 ## Dispatcher API
 

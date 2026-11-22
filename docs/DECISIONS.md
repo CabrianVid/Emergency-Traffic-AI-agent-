@@ -17,6 +17,24 @@
   counts. Compare response time among calls jointly reached, so
   a policy cannot gain seconds merely by dropping hard-to-reach calls.
 
+## City-wide presentation decisions (2026-11-22)
+
+- **A1 `urgent_first` keeps priority order per vehicle.** The profile's
+  documented intent is to serve critical work sooner, but greedy
+  insertion could place a later routine task in front of an already
+  inserted critical pickup on the same unit, delaying a cardiac arrest
+  by minutes. Insertions may no longer precede a pending pickup of a
+  more urgent task in that profile. B0 and `minimum_disruption` are
+  unchanged. All existing tests pass; published A1/A3 benchmark numbers
+  predate this and must be regenerated before reuse.
+- **Junction-deferred reroutes are opt-in.** The presentation commits an
+  approved plan immediately and installs a mid-junction unit's route on
+  its next road edge. The dashboard and benchmark keep the stricter
+  "advance and retry" behavior.
+- **Scene uses actuated, joined signals.** Guessed fixed-time programs
+  gave ~4 min civilian delay on every corridor; actuated control keeps
+  traffic moving while leaving the green wave something to do.
+
 Dated 2026-11-21. Each entry says what was chosen, why, and what the
 honest limitation is -- so a later prompt either accepts the tradeoff
 knowingly or replaces it deliberately (and updates this file when it does).

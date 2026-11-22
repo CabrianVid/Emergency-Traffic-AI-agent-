@@ -194,15 +194,49 @@ world so builds using the new stop format can resume mid-hold.
 
 ## Native Ljubljana presentation
 
-The [2D presentation](RUNBOOK.md#native-sumo-2d-presentation) builds the
-dashboard's road extract into a separate generated directory and uses
-the existing TraCI owner with the SUMO GUI binary. One fixed urgent route
-and four synthetic civilian flows traverse the Njegoševa and Zaloška
-corridor. The blue-light device and vehicle physics are shared by B0 and
-A2. Only A2 enables green-wave requests for the ambulance. The displayed
-intervention count comes from the controller's phase-shortening events.
+The [2D presentation](RUNBOOK.md#native-sumo-2d-presentation) builds a
+5 × 4 km network from `simulation/presentation/ljubljana-wide-roads.osm.gz`
+(OSM drivable roads, merged from twelve OSM API 0.6 map tiles for
+bbox 14.490,46.040–14.545,46.068 on 2026-11-22, ODbL 1.0) with
+`--tls.join --junctions.join --roundabouts.guess --ramps.guess
+--tls.default-type actuated` plus guessed signals. Un-joined variants
+had lower civilian delay but showed intermittent native SUMO crashes and
+almost no green-wave interventions, so they were not used.
 
-The [scene layer](../simulation/presentation/ljubljana.scene.add.xml)
+Named places resolve to the nearest junction with two-way access to UKC.
+The scene runs `CityRun`, a `LogisticsRun` subclass, so dispatch uses the
+benchmark's planners, approval service, 15 s approval and 10 s
+mobilization. Routine transfers use the `ambulance_routine` type; a unit
+becomes `ambulance` (blue light) only for itineraries with a critical
+task, as in the benchmark. The scene sets SUMO `collision.action=warn`,
+`collision.check-junctions=false` and `ignore-junction-blocker=30`
+because joined OSM junction clusters otherwise teleport vehicles.
+
+The controller re-inserts a rerouted vehicle at its live position. It
+caps the speed so SUMO's insertion brake gap (`v·tau + v²/2d`) fits
+before a stop on the same edge, caps it at the new vType's top speed,
+moves same-edge stops just ahead of the bumper, replaces an insertion
+still queued from the previous reroute, and if SUMO still refuses the
+exact speed, re-inserts once with `departSpeed="max"`. Each adjustment
+is logged as an event.
+
+The current aerial is the same 2024 GURS DOF025 orthophoto, requested
+for the network's UTM bounds (459936.45,5098370.81–465128.78,5102355.52,
+4096 × 3143 px) and dimmed so markers stand out. The earlier corridor
+scene's assets below remain in the folder but are no longer used.
+
+The licensed aerial backdrop is the 2024 DOF025 orthophoto from the
+Surveying and Mapping Authority of the Republic of Slovenia (GURS).
+The [open data record](https://podatki.gov.si/dataset/ortofoto) and
+[terms](https://www.e-prostor.gov.si/fileadmin/struktura/EGP/General_terms.pdf)
+identify it as CC BY 4.0. The [WMS image](https://gis.level2.si/geoserver/level2/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=level2%3ADOF025_2024&STYLES=&FORMAT=image%2Fjpeg&SRS=EPSG%3A32633&BBOX=462423.62%2C5099850.15%2C463143.62%2C5100355.15&WIDTH=1800&HEIGHT=1263)
+was downloaded on 2026-11-22 from the Level2 service, adjusted for
+brightness and saturation, and stored as a local JPEG. Its UTM
+bounding box uses the SUMO network projection and offset. The roads
+and signals are still rendered from the SUMO network. The sprite fronts
+use the lower edge of each source image to match SUMO's texture mapping.
+
+The earlier [vector scene layer](../simulation/presentation/ljubljana.scene.add.xml)
 contains [OpenStreetMap](https://www.openstreetmap.org/copyright) building
 footprints, parks and other land-use polygons under ODbL 1.0. The source
 was the [OSM map extract](https://api.openstreetmap.org/api/0.6/map?bbox=14.5075,46.0518,14.5215,46.0595)

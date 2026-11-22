@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<viewsettings>
+    <scheme name="RescueFlow Ljubljana city-wide">
+        <background backgroundColor="22,26,30" showGrid="false"/>
+        <edges laneEdgeMode="0" laneShowBorders="false" showLinkRules="false"
+               showLinkDecals="false" realisticLinkRules="false" showDirection="false"
+               widthExaggeration="2.2">
+            <colorScheme name="uniform">
+                <entry name="road" color="58,64,70,220"/>
+                <entry name="no passenger" color="90,92,90,160"/>
+            </colorScheme>
+        </edges>
+        <junctions drawShape="true" drawCrossingsAndWalkingareas="false">
+            <colorScheme name="uniform">
+                <entry name="" color="58,64,70,220"/>
+            </colorScheme>
+        </junctions>
+        <vehicles vehicleMode="0" vehicleQuality="2" vehicle_minSize="4" vehicle_exaggeration="9"/>
+        <pois poiDetail="24" poiTextParam="label" poiText_show="true" poiText_constantSize="true"
+              poiText_size="50" poiText_color="255,255,255" poiText_bgColor="15,20,26,215" poi_minSize="0"/>
+    </scheme>
+    <viewport x="2596" y="1992" zoom="100"/>
+    <decal file="ljubljana-wide-aerial.jpg" centerX="2596.165" centerY="1992.355" width="5192.33" height="3984.71" layer="-20"/>
+    <delay value="60"/>
+</viewsettings>

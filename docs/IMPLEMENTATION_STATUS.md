@@ -21,32 +21,59 @@ The benchmark and offline replay work without model credentials.
 Setup, sample report paths and the four-minute walkthrough are in the
 [README](../README.md), [runbook](RUNBOOK.md) and [demo script](DEMO_SCRIPT.md).
 
-## Native SUMO 2D presentation
+## Native SUMO 2D presentation (city-wide)
 
-Checkpoint `ab2142f` adds a separately launched Ljubljana scene with
-OpenStreetMap building and park outlines, top-down vehicle artwork and
-a label that follows the live SUMO ambulance. The experiment runner,
-published measurements and dispatcher presets still use their previous
-inputs.
+Updated 2026-11-22. `rescueflow.sumo.presentation` now plays a 5 × 4 km
+Ljubljana scene built from a wider OSM road extract
+(`simulation/presentation/ljubljana-wide-roads.osm.gz`) over a matching
+2024 GURS aerial (`ljubljana-wide-aerial.jpg`). Ten ambulances, seven
+routine transfers, eight emergency calls and ~430 civilian trips run
+through the benchmark's `LogisticsRun`, so each call is planned by the
+real B0 or A1 planner and committed through `DefaultApprovalService`.
+A left-hand panel, hospital and station icons, pulsing call markers and
+state-colored units are drawn by `CityView` through new controller GUI
+helpers (`gui_marker`, `gui_vehicle_view`, `gui_frame`).
 
 ```powershell
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation B0
-.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation A2
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation baseline
+.\.venv\Scripts\python.exe -m rescueflow.sumo.presentation rescueflow
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-On SUMO 1.28.0 the same fixed trip took 45.00 simulated seconds in B0
-and 41.50 in A2. B0 made zero requests. A2 shortened one phase and ended
-all three requests. The paired headless runs had byte-identical route
-inputs and empty SUMO warning logs. The native A2 view was inspected
-and captured during the trip. Both desktop modes completed. All 51
-existing tests passed.
+Verified on SUMO 1.28.0: both policies complete headless and in the GUI
+(screenshots inspected). RescueFlow (A3) repeated three times with
+identical results: average response 3:38, worst 7:29, 6/8 within 5:00,
+4/7 routine transfers late. Baseline (B0): 7:35, 14:37, 2/8, 0/7 late.
+All 51 tests pass. Runs record a few SUMO junction-collision warnings
+(collision action is `warn`), counted in each run's `summary.json`.
 
-This is an illustrative trip with synthetic demand, separate from the
-multi-seed evaluation. See the [runbook](RUNBOOK.md#native-sumo-2d-presentation)
-for replay and output options. A subsequent local OpenAI smoke reached
-the provider and received `billing_not_active`. The interpretation
-endpoint returned the validated rule-based draft.
+Building the larger scene exposed and fixed real issues:
+
+- **A1 `urgent_first` could put routine work ahead of a critical call** on
+  the same vehicle (a routine insertion was cheapest in front of it).
+  `try_insert(..., keep_priority_order=True)` now forbids inserting a task
+  ahead of a pending pickup of a more urgent task for that profile. See
+  DECISIONS.md. **The published A1/A3 benchmark numbers predate this fix**
+  (B0/A2 reproduce exactly; a seed-0 urgent smoke run gave A1 CALL-2
+  249 s instead of the published 1998 s). Rerun the matrix before
+  quoting A1/A3 figures.
+- **Re-inserting a moving unit** failed when its next stop was within
+  braking distance, when it lost blue-light status above routine top
+  speed, when a stop lay behind its bumper, or when SUMO queued the
+  insertion. The controller now caps the re-insertion speed
+  (`reroute_speed_capped`), clamps stops ahead, replaces queued
+  insertions, and retries a blocked insertion once at SUMO's maximum safe
+  speed (`reinsertion_speed_relaxed`). These paths previously ended a run
+  with an error, so valid benchmark runs are unaffected.
+- `_enforce_frozen` read every vehicle's position twice per step and
+  discarded it; removing that made a city run 13× faster (20 s headless).
+- Opt-in `defer_junction_reroutes` (presentation only) commits a plan while
+  a unit is inside a junction and installs its route on the next road edge.
+
+Known limitations: the scene uses free-flow ETAs, so a unit stuck in a
+queue can still look close to the planner. SUMO 1.28.0 crashed natively
+in un-joined variants of this network; the shipped joined, actuated
+network did not crash in any run.
 
 ## Recorded measurements
 
