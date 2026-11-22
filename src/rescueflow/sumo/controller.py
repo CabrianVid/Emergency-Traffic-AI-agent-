@@ -81,6 +81,7 @@ class TraciSimulationController:
         # junction and install its route as soon as it reaches a road edge.
         self.defer_junction_reroutes = False
         self._deferred_reroutes: set[str] = set()
+        self._holds: dict[str, float] = {}
 
     # -- connection lifecycle -------------------------------------------------
 
@@ -220,6 +221,7 @@ class TraciSimulationController:
         self._spawn_origin.clear()
         self._awaiting_insertion.clear()
         self._deferred_reroutes.clear()
+        self._holds.clear()
 
     # -- route/stop bookkeeping ------------------------------------------------
 
@@ -526,6 +528,7 @@ class TraciSimulationController:
         standalone = not self._connected
         if standalone:
             self.connect(resume=True, world=world)
+        self._ensure_travel().set_closed_edges(world.closed_edges)
         any_established = False
         for vehicle_id in vehicle_ids:
             vehicle = world.vehicles[vehicle_id]
@@ -550,6 +553,33 @@ class TraciSimulationController:
             self.step(world, n=1)
         if standalone:
             self.save_and_close()
+
+    def edge_travel_times(self) -> dict[str, float]:
+        """Current mean travel time of every road edge, as SUMO observes it."""
+        import traci  # noqa: PLC0415
+
+        return {e: traci.edge.getTraveltime(e) for e in traci.edge.getIDList() if not e.startswith(":")}
+
+    def use_live_traffic(self, *providers) -> None:
+        times = self.edge_travel_times()
+        for provider in (self._ensure_travel(), *providers):
+            provider.set_live_travel_times(times)
+
+    def hold_vehicle(self, world: WorldState, vehicle_id: str, seconds: float) -> None:
+        """Physically delay a unit: it stands still until the hold expires."""
+        self._holds[vehicle_id] = max(self._holds.get(vehicle_id, 0.0), world.sim_time_s + seconds)
+        self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "vehicle_held",
+                               "vehicle_id": vehicle_id, "seconds": seconds})
+
+    def _apply_holds(self, world: WorldState, traci) -> None:
+        live = set(traci.vehicle.getIDList()) if self._holds else set()
+        for vehicle_id, until in list(self._holds.items()):
+            release = world.sim_time_s >= until
+            if release:
+                del self._holds[vehicle_id]
+            broken = vehicle_id in world.vehicles and world.vehicles[vehicle_id].status == VehicleStatus.broken
+            if vehicle_id in live and not broken:
+                traci.vehicle.setSpeed(vehicle_id, -1 if release else 0)
 
     def _edge_after_junction(self, vehicle_id: str) -> str:
         import traci  # noqa: PLC0415
@@ -689,11 +719,10 @@ class TraciSimulationController:
 
         for _ in range(n):
             self._hold_hospital_dropoffs(world, traci)
+            self._apply_holds(world, traci)
             traci.simulationStep()
             world.sim_time_s = traci.simulation.getTime()
             world.bump_telemetry()
-            self._retry_blocked_insertions(world, traci)
-            self._apply_deferred_reroutes(world, traci)
             if self.observations_dir is not None:
                 for ids, kind in (
                     (traci.simulation.getStartingTeleportIDList(), "teleport_started"),
@@ -702,6 +731,9 @@ class TraciSimulationController:
                     for vehicle_id in ids:
                         self.event_log.append({"kind": kind, "vehicle_id": vehicle_id, "sim_time_s": world.sim_time_s})
             self._process_arrivals_and_stops(world, traci)
+            # After the arrival check: replacing a unit must not look like an arrival.
+            self._retry_blocked_insertions(world, traci)
+            self._apply_deferred_reroutes(world, traci)
             self._update_positions(world, traci)
             self._run_green_wave(world, traci)
             for restored in tick_scheduled_restorations(world):

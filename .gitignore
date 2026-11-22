@@ -35,3 +35,4 @@ experiments/*.csv
 .idea/
 Thumbs.db
 .DS_Store
+experiments/mc/

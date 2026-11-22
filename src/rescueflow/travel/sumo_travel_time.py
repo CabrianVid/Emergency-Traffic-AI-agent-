@@ -49,7 +49,19 @@ class SumoTravelTimeProvider:
         self.activation_s = activation_s
         self.takeoff_landing_s = takeoff_landing_s
         self._closed: frozenset[str] = frozenset()
+        self._live: dict[str, float] = {}
         self._path_cache: dict[tuple[str, str, frozenset[str]], list | None] = {}
+
+    def set_live_travel_times(self, seconds_by_edge: dict[str, float]) -> None:
+        """Opt-in: current observed edge travel times (navigation-style traffic).
+        Without a call, every query keeps using free-flow times."""
+        self._live = dict(seconds_by_edge)
+        self._path_cache.clear()
+
+    def _edge_s(self, edge) -> float:
+        free_flow = edge.getLength() / edge.getSpeed()
+        # Cap stalled edges so one standing car cannot make a road look closed.
+        return min(max(self._live.get(edge.getID(), free_flow), free_flow), free_flow + 300.0)
 
     def set_closed_edges(self, edge_ids) -> None:
         """Must be called whenever `WorldState.closed_edges` changes. Does
@@ -97,7 +109,7 @@ class SumoTravelTimeProvider:
             for next_edge in edge.getOutgoing():
                 if next_edge.getID() in self._closed or next_edge in visited:
                     continue
-                weight = next_edge.getLength() / next_edge.getSpeed()
+                weight = self._edge_s(next_edge)
                 nd = d + weight
                 if next_edge not in dist or nd < dist[next_edge]:
                     dist[next_edge] = nd
@@ -116,7 +128,7 @@ class SumoTravelTimeProvider:
                 path = self._dijkstra(from_edge, to_edge.getID())
                 if path is None:
                     continue
-                cost = sum(e.getLength() / e.getSpeed() for e in path)
+                cost = sum(self._edge_s(e) for e in path)
                 if cost < best_cost:
                     best_cost, best = cost, path
         self._path_cache[cache_key] = best
@@ -148,7 +160,7 @@ class SumoTravelTimeProvider:
             path = self._dijkstra(from_edge, to_edge.getID())
             if path is None:
                 continue
-            cost = sum(e.getLength() / e.getSpeed() for e in path)
+            cost = sum(self._edge_s(e) for e in path)
             if cost < best_cost:
                 best_cost, best = cost, path
         return [e.getID() for e in best] if best is not None else None
@@ -167,7 +179,7 @@ class SumoTravelTimeProvider:
         path = self._best_path(origin_node, dest_node)
         if path is None:
             raise ValueError(f"no road route from {origin_node!r} to {dest_node!r} (closures: {sorted(self._closed)})")
-        return sum(e.getLength() / e.getSpeed() for e in path)
+        return sum(self._edge_s(e) for e in path)
 
     def road_route_exists(self, origin_node: str, dest_node: str) -> bool:
         if origin_node == dest_node:
