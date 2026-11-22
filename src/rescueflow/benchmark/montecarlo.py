@@ -6,6 +6,11 @@ A2  A1 plus green-wave priority for critical legs
 R1  ablation: the same options as A1, picked by the deterministic rule (no AI).
     A1 vs R1 is what the AI itself adds; B0 vs R1 is what the optimizer adds.
 
+B1  stronger conventional baseline, added after the first 4,000 runs because their
+    audit showed B0 parks waiting calls behind one busy unit: central queue,
+    priority order, immediate re-dispatch when a unit becomes ready, no AI.
+    Only B1 gets that extra trigger, and with no decision delay.
+
 These are NOT the historical A1/A2/A3 of docs/EXPERIMENTS.md (old A2 was
 B0 + signals). Automatic execution of the AI's first choice exists only here.
 
@@ -44,11 +49,12 @@ from rescueflow.events.interpreter import RuleBasedEventInterpreter
 from rescueflow.events.types import EventDraft, ValidationError
 from rescueflow.models.core import EventType, TaskKind, TaskStatus, WorldState
 from rescueflow.planning.baseline import BaselinePlanner
+from rescueflow.planning.queue_dispatch import CentralQueuePlanner, ready_pairs, waiting_calls
 from rescueflow.sumo.controller import TraciSimulationController
 from rescueflow.travel import SumoTravelTimeProvider
 
 POLICIES = ("B0", "A1", "A2")
-ALL_POLICIES = (*POLICIES, "R1")
+ALL_POLICIES = (*POLICIES, "R1", "B1")
 ROOT = Path("experiments/mc")
 
 
@@ -76,6 +82,7 @@ class Run:
         self.reported: dict[str, float] = {}
         self.changed = 0
         self.on_step = None
+        self._last_pairs: frozenset = frozenset()
 
     def log(self, kind: str, **fields) -> None:
         self.events.append({"kind": kind, "sim_time_s": self.world.sim_time_s, **fields})
@@ -124,13 +131,16 @@ class Run:
         world = self.world
         self.controller.use_live_traffic(self.travel)
         event = world.events[-1]
-        if self.policy == "B0":
+        if self.policy in ("B0", "B1"):
             planning = world.model_copy(deep=True)
             self.travel.set_closed_edges(world.closed_edges)
             for vehicle in planning.vehicles.values():
                 edge = vehicle.sumo_edge_id
                 if edge and not edge.startswith(":"):
                     vehicle.node_id = self.travel.net.getEdge(edge).getToNode().getID()
+            if self.policy == "B1":
+                plan = CentralQueuePlanner(self.travel).plan(planning, event)
+                return plan if plan.feasibility.feasible else None
             plan = BaselinePlanner(self.travel, solve_budget_s=30, nearest_available_emergency=True
                                    ).baseline_repair(planning, event)
             return plan if plan.feasibility.feasible else None
@@ -178,6 +188,16 @@ class Run:
         self.changed += sum(bool(before.get(k)) and t.assigned_vehicle_id != before[k] for k, t in candidate.tasks.items())
         self.log("plan_committed", units=touched, unserved=plan.unserved_task_ids, decision_ms=elapsed)
 
+    def _queue_can_move(self, delay: float) -> bool:
+        """A call past its first decision is waiting and a unit became ready."""
+        if not any(self.reported.get(t.id, 0.0) + delay <= self.world.sim_time_s for t in waiting_calls(self.world)):
+            self._last_pairs = frozenset()
+            return False
+        pairs = ready_pairs(self.world)
+        moved = bool(pairs - self._last_pairs)
+        self._last_pairs = pairs
+        return moved
+
     def execute(self) -> None:
         pending = list(self.manifest["events"])
         due: list[float] = []
@@ -196,6 +216,8 @@ class Run:
                     due.append(now + delay)
             if due and now >= due[0]:
                 due = [d for d in due if d > now]
+                self.dispatch()
+            elif self.policy == "B1" and self._queue_can_move(delay):
                 self.dispatch()
             self.controller.step(self.world, capture_positions=False)
             if self.on_step is not None:
@@ -444,7 +466,8 @@ def report(root: Path) -> dict:
             "ai_latency_ms_median": median([x for r in valid for x in r["ai_latency_ms"]] or [0]),
             "ai_input_tokens": sum(get("ai_input_tokens")),
         }
-    for reference, candidate in (("B0", "A1"), ("A1", "A2"), ("B0", "A2"), ("B0", "R1"), ("R1", "A1")):
+    for reference, candidate in (("B0", "A1"), ("A1", "A2"), ("B0", "A2"), ("B0", "R1"), ("R1", "A1"),
+                                 ("B0", "B1"), ("B1", "A1"), ("B1", "A2"), ("B1", "R1")):
         both = sorted(set(rows[reference]) & set(rows[candidate]))
         valid = [s for s in both if rows[reference][s]["valid"] and rows[candidate][s]["valid"]]
         if len(valid) < 2:

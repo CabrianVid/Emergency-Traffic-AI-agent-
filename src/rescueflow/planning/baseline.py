@@ -56,17 +56,21 @@ class BaselinePlanner:
         solve_budget_s: float = DEFAULT_SOLVE_BUDGET_S,
         *,
         nearest_available_emergency: bool = False,
+        retry_unserved: bool = False,
     ) -> None:
         self.travel = travel
         self.validator = validator or DefaultPlanValidator()
         self.solver_log = solver_log
         self.solve_budget_s = solve_budget_s
         self.nearest_available_emergency = nearest_available_emergency
+        # Off reproduces the recorded B0 results, where `unserved` was final.
+        self.retry_unserved = retry_unserved
 
     def baseline_repair(
         self, world: WorldState, event: Event | None, profile: str = "minimum_disruption"
     ) -> PlanProposal:
-        pending = [t for t in world.tasks.values() if t.status == TaskStatus.pending]
+        waiting = (TaskStatus.pending, TaskStatus.unserved) if self.retry_unserved else (TaskStatus.pending,)
+        pending = [t for t in world.tasks.values() if t.status in waiting]
         pending.sort(key=_sort_key)
 
         working_vehicles = {vid: v.model_copy(deep=True) for vid, v in world.vehicles.items()}

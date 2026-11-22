@@ -439,6 +439,7 @@ class TraciSimulationController:
             traci.vehicle.remove(vehicle_id)
             relaxed = {**kwargs, "departSpeed": "max"}
             self._insert_vehicle(vehicle_id, route_id, type_id, relaxed, placements)
+            self._added_at[vehicle_id] = traci.simulation.getTime()
             self._spawn_origin[vehicle_id] = (self._spawn_origin.get(vehicle_id, (None, {}))[0], relaxed)
             self.event_log.append({
                 "sim_time_s": world.sim_time_s, "kind": "reinsertion_speed_relaxed", "vehicle_id": vehicle_id,
@@ -543,7 +544,7 @@ class TraciSimulationController:
                 continue
             served = sum(1 for s in vehicle.route_stops if s.service_completed_at_s is not None)
             remaining = vehicle.route_stops[served:]
-            if remaining and self.defer_junction_reroutes and (vehicle.sumo_edge_id or "").startswith(":"):
+            if remaining and self.defer_junction_reroutes and self._must_leave_edge_first(world, vehicle.sumo_edge_id or ""):
                 # Committed now; installed in SUMO once the unit leaves the junction.
                 self._deferred_reroutes.add(vehicle_id)
                 self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "reroute_deferred_in_junction",
@@ -594,6 +595,12 @@ class TraciSimulationController:
         route = traci.vehicle.getRoute(vehicle_id)
         return route[min(traci.vehicle.getRouteIndex(vehicle_id) + 1, len(route) - 1)]
 
+    @staticmethod
+    def _must_leave_edge_first(world: WorldState, edge_id: str) -> bool:
+        # SUMO cannot re-insert a unit inside a junction or on a closed road;
+        # it drives off first and is rerouted on the next open edge.
+        return edge_id.startswith(":") or edge_id in world.closed_edges
+
     def _apply_deferred_reroutes(self, world: WorldState, traci) -> None:
         if not self._deferred_reroutes:
             return
@@ -602,7 +609,7 @@ class TraciSimulationController:
             if vehicle_id not in live:
                 self._deferred_reroutes.discard(vehicle_id)
                 continue
-            if traci.vehicle.getRoadID(vehicle_id).startswith(":"):
+            if self._must_leave_edge_first(world, traci.vehicle.getRoadID(vehicle_id)):
                 continue
             self._deferred_reroutes.discard(vehicle_id)
             vehicle = world.vehicles[vehicle_id]

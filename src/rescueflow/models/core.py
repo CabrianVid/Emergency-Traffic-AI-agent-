@@ -301,7 +301,7 @@ class PlanProposal(_Base):
     proposal_id: str
     based_on_plan_revision: int
     proposed_at_sim_s: float
-    policy: Literal["b0", "a1"]
+    policy: Literal["b0", "b1", "a1"]
     profile: Literal["urgent_first", "minimum_disruption"] = "minimum_disruption"
     triggering_event_id: str | None = None
     vehicle_plans: list[VehiclePlan] = Field(default_factory=list)

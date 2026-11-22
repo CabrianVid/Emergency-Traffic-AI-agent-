@@ -71,7 +71,7 @@ def _planning_copy(world: WorldState, travel: TravelTimeProvider) -> WorldState:
 
 def _run_strategy(strategy: str, planning: WorldState, travel, event: Event | None, budget_s: float) -> PlanProposal:
     if strategy == "nearest_free_unit":
-        planner = BaselinePlanner(travel, solve_budget_s=budget_s, nearest_available_emergency=True)
+        planner = BaselinePlanner(travel, solve_budget_s=budget_s, nearest_available_emergency=True, retry_unserved=True)
         return planner.baseline_repair(planning, event)
     return OptimizedPlanner(travel, solve_budget_s=budget_s).optimized_repair(planning, event, [strategy])[0]
 
@@ -91,7 +91,7 @@ def measure(world: WorldState, proposal: PlanProposal) -> dict:
             elif stop.kind == StopKind.dropoff:
                 deliveries[stop.task_id] = stop.arrival_s
                 assignment.setdefault(stop.task_id, vehicle_id)
-    open_tasks = [t for t in world.tasks.values() if t.status in (TaskStatus.pending, TaskStatus.planned)]
+    open_tasks = [t for t in world.tasks.values() if t.status in (TaskStatus.pending, TaskStatus.unserved, TaskStatus.planned)]
     critical = {t.id: pickups[t.id] - now for t in open_tasks
                 if t.priority == TaskPriority.critical and pickups.get(t.id) is not None}
     misses = sorted(

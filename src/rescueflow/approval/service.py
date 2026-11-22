@@ -87,7 +87,7 @@ class DefaultApprovalService:
                     continue
                 previously_assigned = task.assigned_vehicle_id
                 task.assigned_vehicle_id = vp.vehicle_id
-                if task.status == TaskStatus.pending:
+                if task.status in (TaskStatus.pending, TaskStatus.unserved):
                     task.status = TaskStatus.planned
                 if previously_assigned != vp.vehicle_id and self.notifier is not None:
                     dest_task = world.tasks[stop.task_id]

@@ -57,7 +57,6 @@ _NON_MOVABLE_STATUSES = (
     TaskStatus.en_route_dropoff,
     TaskStatus.completed,
     TaskStatus.interrupted,
-    TaskStatus.unserved,
     TaskStatus.requires_operator_intervention,
 )
 
@@ -67,7 +66,8 @@ def _is_movable(task: Task, world: WorldState) -> bool:
     yet started executing them (status == planned, not in that vehicle's
     locked/in-progress prefix). Anything in flight, completed, superseded or
     escalated is never eligible for A1 to pick up and relocate."""
-    if task.status == TaskStatus.pending:
+    # A call nobody could take earlier must be reconsidered, not forgotten.
+    if task.status in (TaskStatus.pending, TaskStatus.unserved):
         return True
     if task.status in _NON_MOVABLE_STATUSES:
         return False

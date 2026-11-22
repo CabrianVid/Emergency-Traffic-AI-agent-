@@ -84,7 +84,7 @@ class BenchmarkResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario_id: str
-    policy: Literal["b0", "a1"]
+    policy: Literal["b0", "b1", "a1"]
     evaluation: PlanEvaluation
 
 
