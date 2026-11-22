@@ -8,7 +8,7 @@ markers come from TraCI.
 ## Four-minute walkthrough
 
 1. **Start state.** The AI co-dispatcher already suggests who should take the
-   unassigned work. Point out the magenta marks, then press `Enter`.
+   unassigned work. Point out the orange marks, then press `Enter`.
 2. **Emergency call.** Press `F2`. The call appears as "Needs a unit" and the
    AI compares plans. The panel says whether the AI ranked them, only one plan
    exists, or fixed rules ranked them because the AI is unavailable.

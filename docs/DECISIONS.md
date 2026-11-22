@@ -291,8 +291,9 @@ tasks, ignoring generated proposal and stop IDs.
 
 - **Simulation controls and the benchmark sit behind Training (`F9`)**; the status bar
   keeps the label, so anyone who looks can see that this is a training session.
-- **One color belongs to the AI** (magenta, as flight decks mark a computed route). All
-  other colors state a priority or a unit status. Light by default for projectors.
+- **Black and orange (#000000, #FF8F00), the challenge partner's colors.** Orange marks the
+  AI; other colors state a priority or a unit status. Text on orange is black, because
+  white on it is hard to read. Light by default for projectors.
 - **The clock shows time of day** anchored to simulated time; nothing else is invented.
 - Reasons and trade-offs next to a suggestion are calculated from plan metrics, not
   written by the model. Options computed for an older plan revision are recalculated
@@ -301,3 +302,6 @@ tasks, ignoring generated proposal and stop IDs.
   `simulation/presentation` (CC BY 4.0, attributed on the map).
 - Activity keeps the last 200 events plus 60 signal events, so signals cannot push
   decisions out of the shift log.
+- The map shows about 30% more area. `frontend/src/outerRoads.json` adds 775 street
+  segments from the bundled wide OSM extract (ODbL) as display only: units cannot use
+  them and they cannot be closed. The simulated network is unchanged.

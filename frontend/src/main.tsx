@@ -52,7 +52,7 @@ function App() {
   const [satellite, setSatellite] = useStored('satellite', false)
   const [leftWidth, setLeftWidth] = useStored('left', 376)
   const [rightWidth, setRightWidth] = useStored('right', 432)
-  const [dockHeight, setDockHeight] = useStored('dock-height', 234)
+  const [dockHeight, setDockHeight] = useStored('dock-height', 262)
   const [unitHeight, setUnitHeight] = useStored('unit-height', 242)
   const heldByHand = useRef(false)
   const shownAt = useRef(0)

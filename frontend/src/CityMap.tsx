@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isStale, needsUnit, openTasks, pickedUp, planActions, priorityRank, shortId, unitState } from './model'
+import outerRoads from './outerRoads.json'
 import type { Geometry, Point, Proposal, Snapshot } from './model'
 
 const line = (shape: Point[]) => shape.map(([x, y]) => `${x},${-y}`).join(' ')
+// Streets around the operational network, for orientation only: units do not use them.
+const OUTER = (outerRoads as unknown as { name: string; width: number; shape: Point[] }[])
+  .map((road) => ({ ...road, points: line(road.shape) }))
 // The bundled aerial covers this area, in metres of the Ljubljana network.
 const AERIAL = { x: -700, y: -1450, width: 2685, height: 2000 }
 
@@ -17,7 +21,7 @@ interface Props {
 /** One label per street, on its longest straight piece. */
 function streetLabels(geometry: Geometry) {
   const best = new Map<string, { length: number; at: Point; angle: number }>()
-  for (const road of Object.values(geometry.edges)) {
+  for (const road of [...Object.values(geometry.edges), ...(geometry.network === 'ljubljana' ? OUTER : [])]) {
     if (!road.name) continue
     for (let i = 1; i < road.shape.length; i++) {
       const [a, b] = [road.shape[i - 1], road.shape[i]]
@@ -50,7 +54,8 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
   }, [])
 
   const [left, bottom, right, top] = geometry.bounds
-  const fit = Math.max((right - left) * 1.04 / size[0], (top - bottom) * 1.06 / size[1]) // metres per pixel
+  const margin = geometry.network === 'ljubljana' ? 1.3 : 1.05
+  const fit = Math.max((right - left) * margin / size[0], (top - bottom) * margin / size[1]) // metres per pixel
   const zoom = view?.zoom ?? 1
   const center = view?.center ?? [(left + right) / 2, -(bottom + top) / 2] as Point
   const u = fit / zoom
@@ -120,6 +125,9 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
       }}
       onContextMenu={(event) => event.preventDefault()}>
       {geometry.network === 'ljubljana' && <image className="aerial" href="/ljubljana-aerial.jpg" {...AERIAL} preserveAspectRatio="none"/>}
+      {geometry.network === 'ljubljana' && <g className="outer">
+        <g className="road-casing">{OUTER.map((r, i) => <polyline key={i} points={r.points} strokeWidth={r.width + 2 * u}/>)}</g>
+        <g className="road">{OUTER.map((r, i) => <polyline key={i} points={r.points} strokeWidth={r.width}/>)}</g></g>}
       <g className="road-casing">{roads.map((r) => <polyline key={r.id} points={r.points} strokeWidth={r.width + 2 * u}/>)}</g>
       <g className="road">{roads.map((r) => <polyline key={r.id} points={r.points} strokeWidth={r.width} className={r.id === edge ? 'picked' : ''}
         onClick={() => { if (clicked()) { onSelect(null); onEdge(r.id === edge ? null : r.id) } }}
@@ -130,6 +138,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
         {live.route.map((road, i) => geometry.edges[road] && <polyline key={i} points={line(geometry.edges[road].shape)} strokeWidth={3.5 * u}/>)}
       </g>)}
       {preview && Object.entries(preview.routes).map(([id, route]) => <g key={id} className="route proposal">
+        {route.map((road, i) => geometry.edges[road] && <polyline key={`under-${i}`} className="under" points={line(geometry.edges[road].shape)} strokeWidth={8 * u}/>)}
         {route.map((road, i) => geometry.edges[road] && <polyline key={i} points={line(geometry.edges[road].shape)}
           strokeWidth={4.5 * u} strokeDasharray={`${9 * u} ${6 * u}`}/>)}
       </g>)}

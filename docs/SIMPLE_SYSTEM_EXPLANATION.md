@@ -128,7 +128,7 @@ as the fixed rule in all 34 A1Q rankings.
 ## Dashboard controls
 
 The AI co-dispatcher is the dark panel on the right. Everything it proposes is
-magenta: in the call list, units, map and timeline.
+orange: in the call list, units, map and timeline.
 
 | Control | Effect |
 |---|---|
