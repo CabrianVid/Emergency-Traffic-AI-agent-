@@ -286,3 +286,18 @@ tasks, ignoring generated proposal and stop IDs.
   not touched.
 - A margin against small estimated gains was tried on seen seeds 0-149 and dropped (no
   effect). Seeds 0-199 were used to find the defects above.
+
+# Operator desk redesign (2026-11-22)
+
+- **Simulation controls and the benchmark sit behind Training (`F9`)**; the status bar
+  keeps the label, so anyone who looks can see that this is a training session.
+- **One color belongs to the AI** (magenta, as flight decks mark a computed route). All
+  other colors state a priority or a unit status. Light by default for projectors.
+- **The clock shows time of day** anchored to simulated time; nothing else is invented.
+- Reasons and trade-offs next to a suggestion are calculated from plan metrics, not
+  written by the model. Options computed for an older plan revision are recalculated
+  and cannot be approved. `Enter` is ignored for 0.8 s after a suggestion appears.
+- `frontend/public/ljubljana-aerial.jpg` is a crop of the GURS orthophoto already in
+  `simulation/presentation` (CC BY 4.0, attributed on the map).
+- Activity keeps the last 200 events plus 60 signal events, so signals cannot push
+  decisions out of the shift log.

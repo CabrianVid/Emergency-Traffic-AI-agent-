@@ -14,6 +14,7 @@ export interface Vehicle {
 }
 export interface Task {
   id: string; kind: string; priority: string; status: string; pickup_node: string; dropoff_node: string
+  created_at_s: number; required_capabilities: string[]; required_asset_ids: string[]
   latest_pickup_s: number | null; latest_delivery_s: number | null; assigned_vehicle_id: string | null
 }
 export interface Asset {
@@ -53,13 +54,13 @@ export interface Proposal {
   vehicle_plans: { vehicle_id: string; stops: Stop[] }[]; unserved_task_ids: string[]
   assignments: Assignment[]; routes: Record<string, string[]>; estimated_deadline_misses: string[]
   equivalent_policies: string[]
-  score: { critical_tardiness_s: number; other_weighted_lateness_s: number; assignment_churn: number }
   option_id: string; strategy: string; description: string; rank: number; recommended: boolean
   ai_probability: number | null; signal_priority_units: string[]; warnings: string[]
   metrics: {
     critical_response_eta_s: Record<string, number>; worst_critical_response_eta_s: number | null
     unserved_task_ids: string[]; estimated_deadline_misses: string[]; reassigned_task_ids: string[]
     equipment_delivery_eta_s: Record<string, number | null>; assignments: Record<string, string>
+    waiting_call_ids?: string[]; mean_call_response_s?: number | null
   }
 }
 export interface Recommendation {
@@ -86,38 +87,120 @@ export interface Interpretation {
 }
 
 export const scenarioLabels: Record<Scenario, string> = {
-  breakdown: 'R2 breakdown · K1 recovery', urgent: 'New urgent patient',
+  breakdown: 'R2 breakdown, K1 recovery', urgent: 'New urgent patient',
 }
 export const strategyLabels: Record<string, string> = {
-  urgent_first: 'Urgent first', minimum_disruption: 'Least disruption', nearest_free_unit: 'Nearest free unit',
-  waiting_queue: 'Waiting queue',
+  urgent_first: 'Most urgent first', minimum_disruption: 'Fewest changes', nearest_free_unit: 'Nearest free unit',
+  waiting_queue: 'Free units now, rest wait',
 }
-export const sourceLabels: Record<string, string> = {
-  'openai-decisions': 'Ranked by AI', 'single-feasible-option': 'Only feasible option',
-  'deterministic-fallback': 'Deterministic fallback · not AI',
-}
-export const vehicleColors: Record<string, string> = {
-  R1: '#56e2bc', R2: '#70aefa', R3: '#b89af5', R4: '#f4c76a', R5: '#61d6ed',
-}
-export const terminalStatuses = ['completed', 'interrupted', 'unserved']
+const priorityOrder = ['critical', 'high', 'routine']
+export const priorityRank = (task: Task) => priorityOrder.indexOf(task.priority) + 1
 
+// -- time -----------------------------------------------------------------------
+// The desk shows time of day. A run's clock is anchored once to the wall clock.
+let anchor = Date.now()
+export function setAnchor(run: string, now: number) {
+  const key = `anchor:${run}`
+  anchor = Date.now() - now * 1000
+  try {
+    anchor = Number(localStorage.getItem(key)) || anchor
+    localStorage.setItem(key, String(anchor))
+  } catch { /* storage is blocked: the anchor lives in memory */ }
+}
+const two = (n: number) => String(n).padStart(2, '0')
+export function timeOfDay(value: number | null | undefined, seconds = false) {
+  if (value == null || !Number.isFinite(value)) return '–'
+  const date = new Date(anchor + value * 1000)
+  return `${two(date.getHours())}:${two(date.getMinutes())}${seconds ? `:${two(date.getSeconds())}` : ''}`
+}
+/** A duration as m:ss. */
 export function clock(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return '—'
-  const seconds = Math.max(0, Math.round(value))
-  return [Math.floor(seconds / 60), seconds % 60].map((n) => String(n).padStart(2, '0')).join(':')
+  if (value == null || !Number.isFinite(value)) return '–'
+  const total = Math.round(Math.abs(value))
+  return `${value < -0.5 ? '−' : ''}${Math.floor(total / 60)}:${two(total % 60)}`
 }
-export function words(value: string) {
-  return value.replaceAll('_', ' ')
-}
+/** Compact form of a job ID, for chips and map plates. */
+export const shortId = (id: string) => id.replace('-RECOVERY', ' rec')
+export const words = (value: string) => value.replaceAll('_', ' ')
+
+// -- tasks and units ------------------------------------------------------------
 export function taskLabel(task: Task) {
   if (task.kind === 'equipment_recovery') return 'Equipment recovery'
   if (task.kind === 'equipment_delivery') return 'Equipment delivery'
-  if (task.kind === 'urgent_response') return 'Urgent response'
+  if (task.kind === 'urgent_response') return 'Emergency'
   return 'Patient transfer'
 }
-export function vehicleStatus(vehicle: Vehicle, world: World) {
-  if (['broken', 'weather_grounded', 'delayed'].includes(vehicle.status)) return vehicle.status
-  const taskId = vehicle.route_stops.find((s) => s.service_completed_at_s == null)?.task_id
-  if (!taskId) return 'available'
-  return world.tasks[taskId]?.status === 'en_route_dropoff' ? 'carrying' : 'assigned'
+export const nextStop = (vehicle: Vehicle) => vehicle.route_stops.find((stop) => stop.service_completed_at_s == null)
+export const pickedUp = (task: Task) => ['picked_up', 'en_route_dropoff'].includes(task.status)
+/** The next deadline that still applies to the task. */
+export const deadline = (task: Task) =>
+  (pickedUp(task) ? task.latest_delivery_s : task.latest_pickup_s ?? task.latest_delivery_s) ?? Infinity
+export const needsUnit = (task: Task) => ['pending', 'unserved'].includes(task.status)
+export const openTasks = (world: World) => Object.values(world.tasks)
+  .filter((task) => !['completed', 'interrupted'].includes(task.status))
+  .sort((a, b) => priorityRank(a) - priorityRank(b) || deadline(a) - deadline(b))
+export function plannedArrival(task: Task, world: World) {
+  const stops = task.assigned_vehicle_id ? world.vehicles[task.assigned_vehicle_id]?.route_stops ?? [] : []
+  return stops.find((s) => s.task_id === task.id && s.service_completed_at_s == null)?.arrival_s ?? null
+}
+
+export interface UnitState { key: 'free' | 'enroute' | 'scene' | 'transport' | 'hospital' | 'out'; label: string }
+export function unitState(vehicle: Vehicle, state: Snapshot, geometry: Geometry | null): UnitState {
+  if (['broken', 'weather_grounded', 'offline'].includes(vehicle.status)) return { key: 'out', label: 'Out of service' }
+  const stop = nextStop(vehicle)
+  if (!stop?.task_id) return { key: 'free', label: 'Available' }
+  const live = state.telemetry.fleet?.[vehicle.id]
+  const node = geometry?.nodes[stop.node_id]
+  const there = live && node && live.speed_mps < 0.3 && Math.hypot(live.xy[0] - node[0], live.xy[1] - node[1]) < 40
+  if (stop.kind === 'pickup') return there ? { key: 'scene', label: 'On scene' } : { key: 'enroute', label: 'En route' }
+  return there ? { key: 'hospital', label: 'Handing over' } : { key: 'transport', label: 'Transporting' }
+}
+
+// -- places ---------------------------------------------------------------------
+export type Place = (node: string) => string
+export function buildPlaces(geometry: Geometry | null, world: World | null): Place {
+  const hospitals = new Map(Object.values(world?.receiving_sites ?? {}).map((site) => [site.node_id, `Hospital ${site.id}`]))
+  const cache = new Map<string, string>()
+  return (node) => {
+    const known = hospitals.get(node) ?? cache.get(node)
+    if (known) return known
+    const point = geometry?.nodes[node]
+    const names = new Set<string>()
+    if (point && geometry) for (const road of Object.values(geometry.edges)) {
+      if (!road.name) continue
+      for (const end of [road.shape[0], road.shape[road.shape.length - 1]])
+        if (Math.hypot(end[0] - point[0], end[1] - point[1]) < 15) names.add(road.name)
+    }
+    const label = [...names].slice(0, 2).join(' / ') || `Junction ${node}`
+    cache.set(node, label)
+    return label
+  }
+}
+
+// -- AI proposals ----------------------------------------------------------------
+export interface Action { task: string; unit: string; from: string | null; arrival: number | null }
+/** What would actually change if this plan were approved. */
+export function planActions(plan: Proposal, world: World): Action[] {
+  const rank = (id: string) => (world.tasks[id] ? priorityRank(world.tasks[id]) : 9)
+  return plan.assignments
+    .filter((a) => a.previous_vehicle_id !== a.vehicle_id)
+    .map((a) => ({ task: a.task_id, unit: a.vehicle_id, from: a.previous_vehicle_id, arrival: a.pickup_s ?? a.delivery_s }))
+    .sort((a, b) => rank(a.task) - rank(b.task) || (a.arrival ?? Infinity) - (b.arrival ?? Infinity))
+}
+export function planHeadline(plan: Proposal, world: World) {
+  const actions = planActions(plan, world)
+  const waiting = plan.metrics.waiting_call_ids ?? []
+  if (!actions.length) return waiting.length ? `Hold ${waiting.join(', ')} for the first free unit` : 'Keep all current assignments'
+  const [first, second] = actions
+  const lead = `${first.from ? 'Move' : 'Send'} ${first.unit} to ${first.task}`
+  if (actions.length === 1) return lead
+  if (actions.length === 2) return `${lead}, ${second.unit} to ${second.task}`
+  return `${lead}, plus ${actions.length - 1} more`
+}
+/** The situation moved on (a stop was completed) after these options were computed. */
+export const isStale = (state: Snapshot) =>
+  state.proposals.length > 0 && state.proposals[0].based_on_plan_revision !== state.world?.plan_revision
+/** Unit the previewed plan gives each task, to mark it across the console. */
+export function proposedUnits(plan: Proposal | undefined, world: World): Record<string, string> {
+  return Object.fromEntries((plan ? planActions(plan, world) : []).map((a) => [a.task, a.unit]))
 }

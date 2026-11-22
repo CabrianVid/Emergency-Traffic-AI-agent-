@@ -9,7 +9,10 @@ Branch `simplify-decision-flow`. Plain-English guide with all results:
   options, approve/reject/recalculate, signal priority, live OpenAI ranking with
   a labeled fallback, Monte Carlo benchmark, replay (headless and in the window,
   from the dashboard and from a folder holding only the published bundle).
-- **Tests:** 73 pass (`pytest tests/ -q`), frontend builds. No automated test calls
+- **Dashboard:** redesigned as an operator desk (2026-11-22): AI co-dispatcher panel,
+  simulation controls behind Training (`F9`), aerial base map. Checked in the browser
+  at 1600x900 and 1366x768.
+- **Tests:** 74 pass (`pytest tests/ -q`), frontend builds. No automated test calls
   the real API; live ranking was checked by hand and by the benchmark.
 - **Measured:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
   dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking

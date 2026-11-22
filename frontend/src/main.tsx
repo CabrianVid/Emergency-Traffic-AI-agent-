@@ -1,186 +1,40 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import {
-  Activity, AlertTriangle, Ambulance, ArrowDownRight, ArrowRight, Check, ChevronDown, ClipboardCheck,
-  Clock3, LocateFixed, Pause, Play, Radio, RotateCcw, Send, SkipForward, TrafficCone, Truck,
-} from 'lucide-react'
 import { api, useSnapshot } from './connection'
+import { Agent } from './Agent'
+import { CallQueue, Inspector, Log, Timeline, UnitBoard } from './Boards'
 import { CityMap } from './CityMap'
-import { ActivityLog, Fleet, Results, Schedule } from './Workstation'
-import { clock, scenarioLabels, sourceLabels, strategyLabels, taskLabel, terminalStatuses, vehicleStatus, words } from './model'
-import type { Geometry, Interpretation, Network, Proposal, Scenario, Snapshot, World } from './model'
+import { Evaluation, SessionPanel } from './Session'
+import { buildPlaces, isStale, needsUnit, openTasks, planActions, setAnchor, timeOfDay, unitState } from './model'
+import type { Geometry, Interpretation, Network, Scenario, Snapshot } from './model'
 import './style.css'
 
-const example = 'Vozilo R2 je obstalo. Komplet K1 je ostal v vozilu.'
-
-function Overview({ world, state }: { world: World; state: Snapshot }) {
-  const active = Object.values(world.tasks).filter((task) => !terminalStatuses.includes(task.status))
-  const available = Object.values(world.vehicles).filter((unit) => unit.mode === 'ambulance' && vehicleStatus(unit, world) === 'available').length
-  const kit = world.assets.K1
-  const kitLocation = kit?.location.kind === 'hospital'
-    ? Object.values(world.receiving_sites).find((site) => site.node_id === kit.location.ref_id)?.id
-    : kit?.location.kind === 'roadside' ? 'Roadside' : kit?.location.ref_id
-  const description = kit?.location.kind === 'hospital' ? 'Delivered' : kit?.location.kind === 'roadside' ? 'Awaiting recovery' : 'Tracked custody'
-  return <div className="overview">
-    <div className="overview-card"><span className="metric-icon teal"><Activity size={17}/></span><div><small>Active tasks</small><strong>{active.length} <em>{active.filter((task) => task.priority === 'critical').length} critical</em></strong></div></div>
-    <div className="overview-card"><span className="metric-icon blue"><Truck size={17}/></span><div><small>Available units</small><strong>{available}<em> / {Object.keys(world.vehicles).length} ambulances</em></strong></div></div>
-    <div className="overview-card"><span className="metric-icon amber"><LocateFixed size={17}/></span><div><small>Equipment K1</small><strong>{kitLocation ?? '—'} <em>{description}</em></strong></div></div>
-    <div className="overview-card"><span className="metric-icon violet"><ClipboardCheck size={17}/></span><div><small>Committed plan</small><strong>r{world.plan_revision} <em>{state.proposals.length ? `${state.proposals.length} choices` : 'Human approval'}</em></strong></div></div>
-  </div>
+function useStored<T>(key: string, initial: T): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? initial } catch { return initial }
+  })
+  return [value, (next) => {
+    setValue(next)
+    try { localStorage.setItem(key, JSON.stringify(next)) } catch { /* not remembered */ }
+  }]
 }
 
-const eta = (value: number | null | undefined) => value == null ? '—' : clock(value)
-
-function PlanCard({ plan, selected, onSelect }: { plan: Proposal; selected: boolean; onSelect: () => void }) {
-  const metrics = plan.metrics
-  const equipment = Object.entries(metrics.equipment_delivery_eta_s)
-  return <button className={`plan-card ${selected ? 'selected' : ''}`} onClick={onSelect} aria-pressed={selected}>
-    <span className="plan-card-head"><span className="plan-letter">{plan.option_id}</span>
-      <strong>{strategyLabels[plan.strategy] ?? plan.strategy}</strong>
-      {plan.recommended && <span className="plan-badge">Recommended</span>}
-      {plan.ai_probability != null && <span className="plan-prob">{Math.round(plan.ai_probability * 100)}%</span>}
-      {selected && <Check size={15}/>}</span>
-    <span className="plan-summary">{plan.description}</span>
-    <span className="plan-metrics">
-      <span>Critical ETA {eta(metrics.worst_critical_response_eta_s)}</span>
-      <span>{metrics.unserved_task_ids.length} unserved</span>
-      <span>{metrics.estimated_deadline_misses.length} est. late</span>
-      <span>{metrics.reassigned_task_ids.length} moved</span>
-    </span>
-    {equipment.length > 0 && <span className="plan-summary">Equipment {equipment.map(([id, value]) => `${id} ${eta(value)}`).join(', ')}</span>}
-    {plan.signal_priority_units.length > 0 && <span className="plan-summary">Traffic-light priority for {plan.signal_priority_units.join(', ')}</span>}
-    {plan.warnings.map((warning) => <span className="plan-warn" key={warning}>{warning}</span>)}
-  </button>
+function Splitter({ axis, value, min, max, invert, onChange }: { axis: 'x' | 'y'; value: number; min: number; max: number; invert?: boolean; onChange: (value: number) => void }) {
+  const start = useRef<{ at: number; value: number } | null>(null)
+  const move = (delta: number, from = value) => onChange(Math.max(min, Math.min(max, from + (invert ? -delta : delta))))
+  return <div className={`splitter ${axis}`} role="separator" tabIndex={0} aria-label="Resize pane" aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
+    aria-valuenow={value} aria-valuemin={min} aria-valuemax={max}
+    onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); start.current = { at: axis === 'x' ? event.clientX : event.clientY, value } }}
+    onPointerMove={(event) => { if (start.current) move((axis === 'x' ? event.clientX : event.clientY) - start.current.at, start.current.value) }}
+    onPointerUp={() => { start.current = null }}
+    onKeyDown={(event) => {
+      const step = { ArrowLeft: -16, ArrowUp: -16, ArrowRight: 16, ArrowDown: 16 }[event.key]
+      if (step) { event.preventDefault(); move(step) }
+    }}/>
 }
 
-function Detail({ state, selected }: { state: Snapshot; selected: string | null }) {
-  const world = state.world
-  if (!world || !selected) return null
-  const unit = world.vehicles[selected]
-  const task = world.tasks[selected]
-  if (!unit && !task) return null
-  const rows: [string, string][] = []
-  if (unit) {
-    const live = state.telemetry.fleet?.[unit.id]
-    const next = unit.route_stops.find((stop) => stop.service_completed_at_s == null)
-    rows.push(['Status', words(vehicleStatus(unit, world))], ['Crew', unit.capabilities.join(', ') || '—'],
-      ['Position', live ? `${Math.round(live.speed_mps * 3.6)} km/h on ${live.edge}` : unit.node_id],
-      ['Equipment', unit.equipment_aboard.join(', ') || 'none'],
-      ['Next stop', next ? `${next.task_id ?? '—'} ${next.kind} · est. ${clock(next.arrival_s)}` : 'none'])
-  } else {
-    rows.push(['Type', taskLabel(task)], ['Priority', task.priority], ['Status', words(task.status)],
-      ['Unit', task.assigned_vehicle_id ?? 'unassigned'],
-      ['Pickup by', clock(task.latest_pickup_s)], ['Deliver by', clock(task.latest_delivery_s)])
-  }
-  return <div className="detail-card"><strong>{unit ? unit.id : task.id}</strong>
-    <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>
-}
-
-function Dispatch({ state, selection, selectPlan, selected, busy, error, command, refresh, road }: {
-  state: Snapshot; selection?: Proposal; selectPlan: (plan: string) => void; selected: string | null; busy: boolean; error: string
-  command: (path: string, body?: object) => Promise<Snapshot | undefined>
-  refresh: (path: string, body: object) => Promise<Interpretation | undefined>; road: string | null
-}) {
-  const [message, setMessage] = useState('')
-  const [interpretation, setInterpretation] = useState<Interpretation | null>(null)
-  const [priority, setPriority] = useState(true)
-  const unit = selected ? state.world?.vehicles[selected] : undefined
-  const task = selected ? state.world?.tasks[selected] : undefined
-  const openTask = task && !terminalStatuses.includes(task.status) ? task : undefined
-  const trigger = (kind: string, ref: string | null = null) => void command('/api/events', { trigger: 'event', kind, ref })
-  const recommendation = state.recommendation
-  const ready = state.simulator !== 'unavailable' && Boolean(state.world)
-  const canApprove = selection && selection.based_on_plan_revision === state.world?.plan_revision
-  const impacted = state.activity.findLast((event) => event.impacted_tasks?.length)
-  const kit = state.world?.assets.K1
-  const breakdownAvailable = state.scenario !== 'breakdown' || (
-    state.world?.vehicles.R2?.status !== 'broken' && kit?.location.kind === 'vehicle' && kit.location.ref_id === 'R2'
-  )
-
-  async function interpret() {
-    const result = await refresh('/api/events/interpret', { message })
-    setInterpretation(result ?? null)
-  }
-  async function applyReport() {
-    if (!interpretation?.report_id) return
-    const result = await command('/api/events', { trigger: 'report', report_id: interpretation.report_id })
-    if (result) setInterpretation(null)
-  }
-
-  return <aside className="panel dispatch-panel" aria-label="Dispatcher assistant">
-    <header className="panel-head"><div className="section-title"><Radio size={16}/><h2>Dispatcher</h2></div><span className="tag">OPERATOR</span></header>
-    <div className="dispatch-body">
-      <div className="dispatch-label"><label htmlFor="crew-report">Crew report</label><button className="text-button" onClick={() => { setMessage(example); setInterpretation(null) }}>Use example</button></div>
-      <textarea id="crew-report" value={message} maxLength={1200} placeholder="Paste a crew report in Slovenian…" onChange={(event) => { setMessage(event.target.value); setInterpretation(null) }}/>
-      <div className="agent-mode"><i/>{interpretation?.source ?? state.agent_mode}</div>
-      <button className="primary-button" disabled={!ready || busy || !message.trim()} onClick={interpret}><Send size={14}/> Interpret report</button>
-      {interpretation && <div className={`interpretation ${interpretation.valid ? '' : 'invalid'}`}>
-        <strong>{interpretation.valid ? <Check size={14}/> : <AlertTriangle size={14}/>}
-          {interpretation.valid ? 'Validated report' : 'Report needs attention'}</strong>
-        <p>{interpretation.summary ?? interpretation.error}</p>
-        {interpretation.valid && <>
-          <small>{words(interpretation.draft?.type ?? '')} · {interpretation.draft?.vehicle_id}
-            {interpretation.draft?.equipment_ids_reported_stranded.length ? ` · ${interpretation.draft.equipment_ids_reported_stranded.join(', ')}` : ''}</small>
-          <button disabled={busy} onClick={applyReport}>Apply incident and compute choices <ArrowRight size={14}/></button>
-        </>}
-      </div>}
-      <Detail state={state} selected={selected}/>
-      <div className="dispatch-label"><label>Report an unexpected event</label></div>
-      <div className="event-grid">
-        <button disabled={!ready || busy} onClick={() => trigger('new_emergency')}>New emergency</button>
-        <button disabled={!ready || busy} onClick={() => trigger('equipment_request')}>Equipment needed</button>
-        {unit && unit.status !== 'broken' && <button disabled={busy} onClick={() => trigger('breakdown', unit.id)}>{unit.id} broke down</button>}
-        {unit && <button disabled={busy} onClick={() => trigger('vehicle_delay', unit.id)}>{unit.id} delayed 2 min</button>}
-        {openTask && <button disabled={busy} onClick={() => trigger('priority_change', openTask.id)}>{openTask.id}: {openTask.priority === 'critical' ? 'lower to high' : 'raise to critical'}</button>}
-        {openTask && <button disabled={busy} onClick={() => trigger('destination_change', openTask.id)}>{openTask.id}: change hospital</button>}
-      </div>
-      <div className="scenario-actions">
-        <button disabled={!ready || busy || state.script_applied || !breakdownAvailable} onClick={() => void command('/api/events', { trigger: 'scenario' })}>
-          <AlertTriangle size={14}/>{state.script_applied || !breakdownAvailable ? 'Reset to replay scripted incident' : 'Trigger scripted incident'}
-        </button>
-        {road && <button disabled={!ready || busy || Boolean(state.world && road in state.world.closed_edges)}
-          onClick={() => void command('/api/events', { trigger: 'road_closure', edge_id: road, duration_s: 240 })}><TrafficCone size={14}/> Close selected road for 4 min</button>}
-      </div>
-      {error && <p className="error-box" role="alert"><AlertTriangle size={14}/>{error}</p>}
-      <div className="plans-head">
-        <div><h3>Recommendations</h3><small>{recommendation ? sourceLabels[recommendation.source] ?? recommendation.source : state.decision_mode}</small></div>
-        <button className="icon-button" title="Recalculate options" aria-label="Recalculate options" disabled={!ready || busy}
-          onClick={() => void command('/api/plans/propose')}><RotateCcw size={15}/></button>
-      </div>
-      {impacted?.impacted_tasks && <p className="impacted">Affected tasks · {impacted.impacted_tasks.join(', ')}</p>}
-      {recommendation && state.proposals.length > 0 && <div className={`recommendation ${recommendation.source === 'openai-decisions' ? '' : 'fallback'}`}>
-        <p>{recommendation.explanation}</p>
-        <small>{recommendation.model ? `${recommendation.model} · ${Math.round(recommendation.latency_ms ?? 0)} ms${recommendation.cache_hit ? ' · cached' : ''}`
-          : recommendation.error ? `AI unavailable: ${recommendation.error}` : 'No model call needed'}</small>
-      </div>}
-      {state.proposals.length === 0 && state.proposal_issues.length === 0 && <p className="proposal-empty">Report an event to compute feasible responses.</p>}
-      {state.proposal_issues.length > 0 && <details className="plan-issues"><summary>{state.proposal_issues.length} feasibility notes</summary>
-        <ul>{[...new Set(state.proposal_issues)].map((issue) => <li key={issue}>{issue}</li>)}</ul>
-      </details>}
-      {state.proposals.map((plan) => <PlanCard key={plan.proposal_id} plan={plan}
-        onSelect={() => selectPlan(plan.proposal_id)} selected={plan.proposal_id === selection?.proposal_id}/>)}
-      {selection && <div className="approve-block">
-        <details className="assignment-details"><summary>Assignments and estimated ETAs</summary>
-          <ul>{selection.assignments.map((assignment) => <li key={assignment.task_id}>
-            <strong>{assignment.task_id}</strong> · {assignment.vehicle_id} · {clock(assignment.pickup_s)} → {clock(assignment.delivery_s)}
-          </li>)}</ul>
-          {selection.unserved_task_ids.length > 0 && <p>Unserved · {selection.unserved_task_ids.join(', ')}</p>}
-        </details>
-        {selection.signal_priority_units.length > 0 && <label className="signal-toggle">
-          <input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)}/>
-          Authorize traffic-light priority for {selection.signal_priority_units.join(', ')}</label>}
-        {!canApprove && <p className="error-box">The plan version changed. Recalculate the options.</p>}
-        <button className="primary-button" disabled={busy || !ready || !canApprove} onClick={() => void command(
-          `/api/plans/${selection.proposal_id}/approve`,
-          { expected_plan_revision: selection.based_on_plan_revision, idempotency_key: selection.proposal_id,
-            signal_priority: priority && selection.signal_priority_units.length > 0 },
-        )}><Check size={16}/> Approve option {selection.option_id}</button>
-        <div className="button-row"><button disabled={busy} onClick={() => void command('/api/plans/reject')}>Reject all</button>
-          <button disabled={busy} onClick={() => void command('/api/plans/propose')}>Recalculate</button></div>
-      </div>}
-    </div>
-  </aside>
-}
+type MenuItem = { label: string; run: () => void; disabled?: boolean }
+const typing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 
 function App() {
   const { state, connection, accept } = useSnapshot()
@@ -188,102 +42,215 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [edge, setEdge] = useState<string | null>(null)
   const [selectedPlan, selectPlan] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'plan' | 'report' | 'other' | null>(null)
   const [error, setError] = useState('')
-  const [results, setResults] = useState(false)
+  const [session, setSession] = useState(false)
+  const [evaluation, setEvaluation] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const [dock, setDock] = useStored<'timeline' | 'log'>('dock', 'timeline')
+  const [night, setNight] = useStored('night', false)
+  const [satellite, setSatellite] = useStored('satellite', false)
+  const [leftWidth, setLeftWidth] = useStored('left', 376)
+  const [rightWidth, setRightWidth] = useStored('right', 432)
+  const [dockHeight, setDockHeight] = useStored('dock-height', 234)
+  const [unitHeight, setUnitHeight] = useStored('unit-height', 242)
+  const heldByHand = useRef(false)
+  const shownAt = useRef(0)
+
   const run = state?.run_id
-  const map = state?.network
-  const selection = state?.proposals?.find((plan) => plan.proposal_id === selectedPlan) ?? state?.proposals?.[0]
-  const live = Boolean(state?.world && state.simulator !== 'unavailable' && connection !== 'offline')
+  const world = state?.world ?? null
+  const offline = connection === 'offline' || !state?.world || state.simulator === 'unavailable'
   const playing = state?.simulator === 'running'
+  const plan = state?.proposals.find((p) => p.proposal_id === selectedPlan) ?? state?.proposals[0]
+  const place = useMemo(() => buildPlaces(geometry, world), [geometry, run]) // eslint-disable-line
 
+  useEffect(() => { document.documentElement.dataset.theme = night ? 'night' : 'day' }, [night])
   useEffect(() => {
-    setSelected(null)
-    setEdge(null)
-    selectPlan(null)
-    setGeometry(null)
-    if (!run || !map) return
+    setSelected(null); setEdge(null); selectPlan(null); setGeometry(null); setError('')
+    heldByHand.current = false
+    if (!run) return
     let active = true
-    api<Geometry>('/api/network').then((value) => {
-      if (active && value.network === map) setGeometry(value)
-    }).catch((failure: Error) => { if (active) setError(failure.message) })
+    api<Geometry>('/api/network').then((value) => { if (active) setGeometry(value) })
+      .catch((failure: Error) => { if (active) setError(failure.message) })
     return () => { active = false }
-  }, [run, map])
+  }, [run])
+  const anchored = useRef('')
+  if (run && world && anchored.current !== run) { anchored.current = run; setAnchor(run, world.sim_time_s) }
+  useEffect(() => {
+    if (!error) return
+    const timer = window.setTimeout(() => setError(''), 9000)
+    return () => window.clearTimeout(timer)
+  }, [error])
 
-  async function send<T>(path: string, body: object = {}): Promise<T | undefined> {
-    setBusy(true)
-    setError('')
-    try {
-      return await api<T>(path, body)
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Command failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-  async function command(path: string, body: object = {}) {
-    const result = await send<Snapshot | { committed: boolean }>(path, body)
+  const send = useCallback(async <T,>(path: string, body: object = {}, kind: 'plan' | 'report' | 'other' = 'other'): Promise<T | undefined> => {
+    setBusy(kind); setError('')
+    try { return await api<T>(path, body) } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The command failed')
+    } finally { setBusy(null) }
+  }, [])
+  const command = useCallback(async (path: string, body: object = {}, kind: 'plan' | 'report' | 'other' = 'other') => {
+    const result = await send<Snapshot | { committed: boolean }>(path, body, kind)
     if (!result) return undefined
     const next = 'sequence' in result ? result : await api<Snapshot>('/api/state').catch(() => undefined)
     if (next) accept(next)
     return next
-  }
-  const load = (network: Network, scenario: Scenario) => void command('/api/simulation/load', { network, scenario })
-  const control = (operation: string, body?: object) => void command(`/api/simulation/${operation}`, body)
-  const select = (id: string) => setSelected((current) => current === id ? null : id)
+  }, [send, accept])
 
-  return <div className="app">
-    <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Ambulance size={23}/></span><div><h1>RescueFlow <span>AI</span></h1><small>DISPATCH WORKSTATION</small></div></div>
-      <div className="top-controls">
-        <span className="simulation-tag"><i/> SIMULATION</span>
-        <div className="sim-clock"><Clock3 size={17}/><time>{clock(state?.world?.sim_time_s)}</time></div>
-        <div className="playback">
-          <button className="play-button" disabled={!live || busy} title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'}
-            onClick={() => control(playing ? 'pause' : 'play')}>{playing ? <Pause size={17}/> : <Play size={17}/>}</button>
-          <button disabled={!live || busy || playing} title="Advance 30 seconds" aria-label="Advance 30 seconds" onClick={() => control('step', { steps: 30 })}><SkipForward size={17}/></button>
-          <button disabled={!state?.run_id || busy} title="Reset run" aria-label="Reset run" onClick={() => control('reset')}><RotateCcw size={16}/></button>
-          <select aria-label="Simulation speed" disabled={!live || busy} value={state?.speed ?? 1} onChange={(event) => control('speed', { speed: Number(event.target.value) })}>
-            {[1, 5, 15, 30].map((s) => <option key={s} value={s}>{s}×</option>)}
-          </select>
-        </div>
-      </div>
-      <button className={`results-toggle ${results ? 'selected' : ''}`} aria-expanded={results} onClick={() => setResults(!results)}><Activity size={16}/> Results <ChevronDown size={14}/></button>
+  function control(operation: string, body?: object) {
+    if (operation === 'pause') heldByHand.current = true
+    if (operation === 'play') heldByHand.current = false
+    void command(`/api/simulation/${operation}`, body)
+  }
+  const ask = useCallback(async () => {
+    await command('/api/plans/propose', {}, 'plan')
+  }, [command])
+  async function inject(kind: string, ref: string | null = null) {
+    const body = kind === 'scenario' ? { trigger: 'scenario' } : kind === 'road_closure' ? { trigger: 'road_closure', edge_id: ref, duration_s: 240 }
+      : { trigger: 'event', kind, ref }
+    const next = await command('/api/events', body, 'plan')
+    if (next) { setEdge(null); if (next.proposals.length === 0) await goOn() }
+  }
+  /** Operations go on once the dispatcher has decided, unless a trainer paused them. */
+  async function goOn() { if (!heldByHand.current) await command('/api/simulation/play') }
+  async function approve(signals: boolean) {
+    if (!plan) return
+    const done = await command(`/api/plans/${plan.proposal_id}/approve`, { expected_plan_revision: plan.based_on_plan_revision,
+      idempotency_key: plan.proposal_id, signal_priority: signals })
+    if (done) await goOn()
+  }
+  async function reject() { if (await command('/api/plans/reject')) await goOn() }
+
+  const pending = Boolean(state?.proposals.length)
+  useEffect(() => {
+    if (pending) shownAt.current = Date.now()
+    else selectPlan(null)
+  }, [pending])
+  useEffect(() => { if (state?.proposals[0]) shownAt.current = Date.now() }, [state?.proposals[0]?.proposal_id]) // eslint-disable-line
+
+  // Options computed for an earlier situation are refreshed, never approved.
+  const refreshed = useRef('')
+  useEffect(() => {
+    if (!state || !isStale(state) || busy) return
+    const key = `${run}-${state.world?.plan_revision}`
+    if (refreshed.current === key) return
+    refreshed.current = key
+    void command('/api/plans/propose', {}, 'plan')
+  }, [state, busy, run, command])
+
+  // A shift that starts with unassigned work gets a first suggestion unasked.
+  useEffect(() => {
+    if (!state?.world || !run || offline || busy || playing || state.proposals.length) return
+    if (state.activity.some((e) => ['proposals_computed', 'plan_approved', 'proposals_rejected'].includes(e.kind))) return
+    if (!openTasks(state.world).some(needsUnit)) return
+    try { if (sessionStorage.getItem('greeted') === run) return; sessionStorage.setItem('greeted', run) } catch { return }
+    void command('/api/plans/propose', {}, 'plan')
+  }, [state, run, offline, busy, playing, command])
+
+  const select = (id: string | null) => { setEdge(null); setSelected((current) => current === id ? null : id) }
+  function openMenu(event: React.MouseEvent, kind: 'unit' | 'task' | 'road', id: string) {
+    event.preventDefault(); event.stopPropagation()
+    if (!world) return
+    const items: MenuItem[] = []
+    if (kind === 'unit') {
+      const out = world.vehicles[id].status === 'broken'
+      items.push({ label: 'Report breakdown', run: () => void inject('breakdown', id), disabled: out },
+        { label: 'Report 2 min delay', run: () => void inject('vehicle_delay', id), disabled: out })
+    } else if (kind === 'task') {
+      items.push({ label: world.tasks[id].priority === 'critical' ? 'Lower to priority 2' : 'Raise to priority 1', run: () => void inject('priority_change', id) },
+        { label: 'Change hospital', run: () => void inject('destination_change', id) })
+    } else items.push({ label: 'Close road for 4 min', run: () => void inject('road_closure', id), disabled: id in world.closed_edges })
+    if (kind !== 'road') items.push({ label: 'Show details', run: () => { setEdge(null); setSelected(id) } })
+    setMenu({ x: Math.min(event.clientX, window.innerWidth - 200), y: Math.min(event.clientY, window.innerHeight - 130), items })
+  }
+
+  const keys = useRef<(event: KeyboardEvent) => void>(() => {})
+  keys.current = (event) => {
+    if (event.key === 'F9') { event.preventDefault(); setSession(!session); return }
+    if (event.key === 'Escape') { setMenu(null); setEvaluation(false); setSession(false); setSelected(null); setEdge(null); return }
+    if (typing(event.target) || event.ctrlKey || event.altKey || event.metaKey || !state || offline || busy) return
+    const injected = { F2: 'new_emergency', F4: 'equipment_request', F8: 'scenario' }[event.key]
+    if (injected) { event.preventDefault(); if (!event.repeat) void inject(injected); return }
+    const onControl = event.target instanceof HTMLElement && event.target.closest('button, a, [role=separator], summary')
+    if (event.repeat || evaluation) return
+    if (event.key === ' ' && !onControl) { event.preventDefault(); control(playing ? 'pause' : 'play') }
+    else if (event.key.toLowerCase() === 'r') void ask()
+    else if (pending && event.key >= '1' && event.key <= '3') { const option = state.proposals[Number(event.key) - 1]; if (option) selectPlan(option.proposal_id) }
+    else if (pending && event.key.toLowerCase() === 'x') void reject()
+    else if (pending && event.key === 'Enter' && !onControl && !isStale(state) && Date.now() - shownAt.current > 800)
+      document.querySelector<HTMLButtonElement>('.decision .approve')?.click()
+  }
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => keys.current(event)
+    const close = () => setMenu(null)
+    window.addEventListener('keydown', down)
+    window.addEventListener('pointerdown', close)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('pointerdown', close) }
+  }, [])
+
+  if (!state?.world) return <div className="offline"><h1>{state?.error ? 'The operations server has a problem' : connection === 'offline' ? 'No connection to the operations server' : 'Connecting'}</h1>
+    <p>{state?.error ?? (connection === 'offline' ? 'Trying again every second. Check that the server is running.' : 'Loading units and calls.')}</p>
+    {state?.error && <button onClick={() => control('reset')}>Restart the session</button>}</div>
+
+  const tasks = openTasks(state.world)
+  const open = tasks.filter(needsUnit)
+  const units = Object.values(state.world.vehicles)
+  const count = (key: string) => units.filter((v) => unitState(v, state, geometry).key === key).length
+  const common = { state, geometry, place, proposal: plan, selected, onSelect: select, onMenu: openMenu }
+  return <div className="desk" style={{ gridTemplateColumns: `${leftWidth}px 4px minmax(0, 1fr) 4px ${rightWidth}px` }}>
+    <header className="strip">
+      <dl>
+        <div className={open.length ? 'alert' : ''}><dt>Without a unit</dt><dd>{open.length}</dd></div>
+        <div><dt>Priority 1 open</dt><dd>{tasks.filter((t) => t.priority === 'critical').length}</dd></div>
+        <div><dt>Open in total</dt><dd>{tasks.length}</dd></div>
+        <div><dt>Units available</dt><dd>{count('free')}<small>/{units.length}</small></dd></div>
+        {count('out') > 0 && <div className="alert"><dt>Out of service</dt><dd>{count('out')}</dd></div>}
+        {Object.keys(state.world.closed_edges).length > 0 && <div><dt>Roads closed</dt><dd>{Object.keys(state.world.closed_edges).length}</dd></div>}
+        {state.signal_priority_active && <div className="on"><dt>Traffic lights</dt><dd>Priority on</dd></div>}
+      </dl>
+      <time className="clock">{timeOfDay(state.world.sim_time_s, true)}</time>
     </header>
-    <main>
-      <div className="command-bar">
-        <div className="view-title"><h2>Operations overview</h2>
-          <span className={`connection ${connection}`}><i/>{connection === 'live' ? 'Live connection' : connection === 'polling' ? 'Polling' : connection === 'offline' ? 'Disconnected' : 'Connecting'}</span>
-          {state && <span className="run-state">{state.demo_pause ? 'Demo pause · compare choices' : words(state.simulator)}</span>}
-        </div>
-        <div className="scenario-picker">
-          <label>Network <select aria-label="Network" value={map ?? 'ljubljana'} disabled={busy || !state}
-            onChange={(event) => load(event.target.value as Network, state?.scenario ?? 'breakdown')}>
-            <option value="ljubljana">Ljubljana</option><option value="grid">Training grid</option>
-          </select></label>
-          <label>Scenario <select aria-label="Scenario" value={state?.scenario ?? 'breakdown'} disabled={busy || !state}
-            onChange={(event) => load(map ?? 'ljubljana', event.target.value as Scenario)}>
-            {Object.entries(scenarioLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}
-          </select></label>
-        </div>
+    <div className="left" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${unitHeight}px` }}>
+      <CallQueue {...common}/>
+      <Splitter axis="y" value={unitHeight} min={120} max={520} invert onChange={setUnitHeight}/>
+      <UnitBoard {...common}/>
+    </div>
+    <Splitter axis="x" value={leftWidth} min={280} max={520} onChange={setLeftWidth}/>
+    <main className="center" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${dockHeight}px` }}>
+      <div className="map-pane">
+        {geometry && geometry.network === state.network ? <CityMap key={run} geometry={geometry} state={state} proposal={plan} selected={selected} onSelect={(id) => { if (id) select(id); else setSelected(null) }}
+          edge={edge} onEdge={setEdge} onMenu={openMenu} satellite={satellite}/> : <p className="empty">Loading the map</p>}
+        <Inspector state={state} geometry={geometry} place={place} selected={selected} edge={edge} busy={Boolean(busy)} onEvent={(kind, ref) => void inject(kind, ref)} onClose={() => { setSelected(null); setEdge(null) }}/>
+        {plan && !isStale(state) && planActions(plan, state.world).length > 0 && <p className="map-key"><i/>Suggested route</p>}
       </div>
-      {state?.error && <p role="alert" className="error-box"><AlertTriangle size={16}/>{state.error}</p>}
-      {!state?.world && <section className="panel empty-state"><Activity size={25}/><h2>{state?.error ? 'Simulator unavailable' : 'Connecting to the simulator'}</h2>
-        <p>{connection === 'offline' ? 'Start the local FastAPI server to connect.' : 'The workstation will display the SUMO session when it is ready.'}</p></section>}
-      {state?.world && <>
-        <Overview world={state.world} state={state}/>
-        {results && <Results metrics={state.metrics}/>}
-        <div className="workspace">
-          <Fleet world={state.world} selected={selected} onSelect={select}/>
-          <CityMap key={`map-${run}`} geometry={geometry} snapshot={state} proposal={selection}
-            selected={selected} onSelect={select} edge={edge} onEdge={setEdge}/>
-          <Dispatch key={`dispatch-${run}`} state={state} selection={selection} selectPlan={selectPlan} selected={selected} busy={busy || connection === 'offline'}
-            error={error} command={command} refresh={send} road={edge}/>
-        </div>
-        <div className="bottom-grid"><Schedule snapshot={state} proposal={selection} selected={selected} onSelect={select}/><ActivityLog snapshot={state}/></div>
-      </>}
-      <footer><span>RescueFlow AI · AdaHack 2026</span><span><ArrowDownRight size={13}/> Synthetic incidents · Human dispatcher approval</span></footer>
+      <Splitter axis="y" value={dockHeight} min={110} max={480} invert onChange={setDockHeight}/>
+      <section className="pane dock">
+        <header><div className="tabs" role="tablist">
+          <button role="tab" aria-selected={dock === 'timeline'} onClick={() => setDock('timeline')}>Timeline</button>
+          <button role="tab" aria-selected={dock === 'log'} onClick={() => setDock('log')}>Log</button></div></header>
+        <div className="scroll">{dock === 'timeline' ? <Timeline {...common}/> : <Log state={state}/>}</div>
+      </section>
     </main>
+    <Splitter axis="x" value={rightWidth} min={360} max={620} invert onChange={setRightWidth}/>
+    <Agent key={run} state={state} geometry={geometry} place={place} plan={plan} busy={busy === 'other' ? null : busy} offline={offline}
+      onPlan={selectPlan} onApprove={(signals) => void approve(signals)} onReject={() => void reject()} onAsk={() => void ask()} onSelect={(id) => { setEdge(null); setSelected(id) }}
+      onInterpret={(message) => send<Interpretation>('/api/events/interpret', { message }, 'report')}
+      onReport={async (id) => Boolean(await command('/api/events', { trigger: 'report', report_id: id }, 'plan'))}/>
+    <footer className="status">
+      <span className={`link ${connection}`}>{connection === 'live' ? 'Connected' : connection === 'polling' ? 'Connected (slow)' : connection === 'offline' ? 'Connection lost' : 'Reconnecting'}</span>
+      <span>{state.network === 'ljubljana' ? 'Ljubljana, Tabor and UKC' : 'Training grid'}</span>
+      <span>Plan {state.world.plan_revision}</span>
+      <span className="grow"/>
+      {geometry?.network === 'ljubljana' && <button aria-pressed={satellite} onClick={() => setSatellite(!satellite)}>Aerial photo</button>}
+      <button aria-pressed={night} onClick={() => setNight(!night)}>Night</button>
+      <button aria-pressed={session} title="F9" onClick={() => setSession(!session)}>Training</button>
+    </footer>
+    {error && <p className="toast" role="alert">{error}<button aria-label="Dismiss" onClick={() => setError('')}>×</button></p>}
+    {state.error && <p className="toast" role="alert">{state.error}</p>}
+    {session && <SessionPanel key={`${run}-session`} state={state} busy={Boolean(busy)} onControl={control} onInject={(kind) => void inject(kind)} onClose={() => setSession(false)}
+      onLoad={(network: Network, scenario: Scenario) => void command('/api/simulation/load', { network, scenario })} onEvaluation={() => { setEvaluation(true); setSession(false) }}/>}
+    {evaluation && <Evaluation state={state} onClose={() => setEvaluation(false)}/>}
+    {menu && <ul className="menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
+      {menu.items.map((item) => <li key={item.label}><button role="menuitem" disabled={item.disabled || Boolean(busy)} onClick={() => { setMenu(null); item.run() }}>{item.label}</button></li>)}</ul>}
   </div>
 }
 

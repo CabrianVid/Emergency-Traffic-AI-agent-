@@ -127,16 +127,22 @@ as the fixed rule in all 34 A1Q rankings.
 
 ## Dashboard controls
 
+The AI co-dispatcher is the dark panel on the right. Everything it proposes is
+magenta: in the call list, units, map and timeline.
+
 | Control | Effect |
 |---|---|
-| Play, +30 s, reset, speed | Simulation clock |
-| Crew report | Text to a validated breakdown |
-| New emergency / Equipment needed | Adds that event |
-| Click a unit | Details; report breakdown or 2 min delay |
-| Click a task | Details; change priority or hospital |
-| Click a road | Close it for 4 minutes |
-| Approve, Reject all, Recalculate | Act on the options |
-| Authorize traffic-light priority | Green wave for the listed units |
+| Suggestion, `1`-`3` | View another option; map, timeline and lists follow |
+| Approve / Confirm (`Enter`), Reject (`X`), Recalculate (`R`) | Act on the options |
+| Clear traffic lights | Green wave for the listed units |
+| Crew report box | Text to a validated event, then "Correct, find a response" |
+| Click a unit, call or road | Details and actions; right-click for the same menu |
+| Aerial photo, Night | Display |
+| Training (`F9`, bottom right) | Run/pause (`Space`), +30 s, restart, speed, area, script, evaluation results |
+| `F2` / `F4` / `F8` | Send an emergency call / equipment request / scripted incident |
+
+The clock shows time of day, anchored to the simulated time of the run. The
+session starts with an unasked first suggestion and runs on after each decision.
 
 ## Run it
 
@@ -154,7 +160,7 @@ npm --prefix frontend run dev -- --port 5173
 
 `run` resumes where it stopped. `replay` re-executes a recorded run with its
 recorded AI answers and checks it reproduces the recorded responses. The same
-replay buttons are in the dashboard's **Results** panel.
+replay buttons are in the dashboard under **Training > Evaluation results**.
 
 ## Where things are
 
