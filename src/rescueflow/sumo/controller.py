@@ -81,6 +81,10 @@ class TraciSimulationController:
         # junction and install its route as soon as it reaches a road edge.
         self.defer_junction_reroutes = False
         self._deferred_reroutes: set[str] = set()
+        # Opt-in (dashboard): civilians drive around a road that closes live.
+        # Without it SUMO aborts when a planned trip departs across it. The
+        # benchmark instead plans civilian routes around its closures.
+        self.detour_civilians = False
         self._holds: dict[str, float] = {}
         self._added_at: dict[str, float] = {}
 
@@ -114,6 +118,8 @@ class TraciSimulationController:
             args += ["--start", "--quit-on-end"]
         if resume and self.has_saved_state():
             args += ["--load-state", self.state_path]
+        if self.detour_civilians:
+            args += ["--ignore-route-errors", "true"]
         if not self.allow_teleport:
             args += ["--time-to-teleport", "-1"]
         if self.observations_dir is not None:
@@ -704,9 +710,29 @@ class TraciSimulationController:
         if standalone:
             self.connect(resume=True, world=world)
         self._set_road_permissions({edge_id: None})
+        if self.detour_civilians:
+            import traci  # noqa: PLC0415
+
+            self._detour(traci.vehicle.getIDList(), world, {edge_id}, traci)
         self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "edge_closed_physically", "edge_id": edge_id})
         if standalone:
             self.save_and_close()
+
+    def _detour(self, vehicle_ids, world: WorldState, closed, traci) -> None:
+        for vehicle_id in vehicle_ids:
+            if vehicle_id in world.vehicles:
+                continue
+            ahead = traci.vehicle.getRoute(vehicle_id)[max(0, traci.vehicle.getRouteIndex(vehicle_id)):]
+            if not any(edge in closed for edge in ahead[1:]):
+                continue  # a car already on the closed road just drives off it
+            if ahead[-1] in closed:
+                # Its destination is closed: the trip ends at the last open road.
+                first = next(i for i, edge in enumerate(ahead) if edge in closed)
+                if first == 0:
+                    continue
+                traci.vehicle.setRoute(vehicle_id, ahead[:first])
+            else:
+                traci.vehicle.rerouteTraveltime(vehicle_id)
 
     def _set_road_permissions(self, edges, *, reopen: bool = False) -> None:
         import traci  # noqa: PLC0415
@@ -737,6 +763,8 @@ class TraciSimulationController:
             traci.simulationStep()
             world.sim_time_s = traci.simulation.getTime()
             world.bump_telemetry()
+            if self.detour_civilians and world.closed_edges:
+                self._detour(traci.simulation.getDepartedIDList(), world, world.closed_edges, traci)
             if self.observations_dir is not None:
                 for ids, kind in (
                     (traci.simulation.getStartingTeleportIDList(), "teleport_started"),

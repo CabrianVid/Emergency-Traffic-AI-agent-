@@ -99,6 +99,7 @@ class DispatchRun:
             # Commit plans while a unit crosses a junction; its route is
             # installed on the next road edge.
             self.controller.defer_junction_reroutes = True
+            self.controller.detour_civilians = True
             self.controller.green_wave.enabled = False
             self.controller.load_scenario(world, keep_connected=True)
             self.controller.step(world, n=129 if network == "ljubljana" else 150)
@@ -217,6 +218,8 @@ class DispatchRun:
             elif event.event.type == EventType.road_closure:
                 self.controller.apply_road_closure_physically(world, payload["edge_id"])
             apply_event(world, event)
+            if event.event.type == EventType.vehicle_delay:
+                self.controller.hold_vehicle(world, payload["vehicle_id"], float(payload["delay_s"]))
             if event.event.type == EventType.destination_changed:
                 # A changed destination is an instruction, not a dispatch
                 # choice: the unit already carrying the task drives there.
@@ -300,6 +303,8 @@ class DispatchRun:
         self.playing = False
         self.demo_pause = True
         event = world.events[-1] if world.events else None
+        # Plan with the travel times SUMO observes now, as the benchmark does.
+        self.controller.use_live_traffic(self.travel)
 
         def route_check(current, proposal):
             self.controller.preview_routes(current, {p.vehicle_id: p.stops for p in proposal.vehicle_plans})

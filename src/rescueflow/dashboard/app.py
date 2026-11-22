@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -15,6 +17,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from rescueflow.benchmark.montecarlo import BUNDLE, ROOT as MC_ROOT, recorded_metrics
 from rescueflow.dashboard.agent import DispatcherAgent
 from rescueflow.dashboard.service import CommandError, DispatchRun, EventKind, Network, Scenario
 from rescueflow.decision.agent import DecisionAgent
@@ -76,6 +79,11 @@ class ApprovalCommand(Command):
     idempotency_key: str = Field(min_length=1, max_length=120)
     approved_by: str = Field("dispatcher-demo", min_length=1, max_length=100)
     signal_priority: bool = False
+
+
+class ReplayCommand(Command):
+    seed: int = Field(ge=0, le=99999)
+    policy: Literal["B0", "B1", "R1", "A1", "A2"]
 
 
 class AssignmentProjection(BaseModel):
@@ -176,6 +184,7 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
 
         app.state.runtime = runtime
         app.state.submit = submit
+        app.state.replay = None
         app.state.interpret_slots = asyncio.Semaphore(2)
         preferred = initial_network or ("grid" if os.getenv("RESCUEFLOW_NETWORK") == "grid" else "ljubljana")
         try:
@@ -295,6 +304,31 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
         if not report.is_file():
             raise HTTPException(404, "No recorded benchmark report is available.")
         return FileResponse(report, media_type="application/json")
+
+    @app.get("/api/benchmarks/montecarlo")
+    async def montecarlo_report():
+        report = BUNDLE / "summary.json"
+        if not report.is_file():
+            raise HTTPException(404, "No Monte Carlo report has been published.")
+        return FileResponse(report, media_type="application/json")
+
+    @app.post("/api/benchmarks/montecarlo/replay")
+    async def replay_run(command: ReplayCommand):
+        """Open a recorded run in the SUMO window. It re-executes the frozen
+        inputs with the recorded AI answers; it never calls the AI."""
+        running = app.state.replay
+        if running is not None and running.poll() is None:
+            raise HTTPException(409, "A replay is already open. Close its SUMO window first.")
+        try:
+            await asyncio.to_thread(recorded_metrics, MC_ROOT, command.seed, command.policy)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+        app.state.replay = subprocess.Popen(
+            [sys.executable, "-m", "rescueflow.benchmark.montecarlo", "replay",
+             "--seed", str(command.seed), "--policy", command.policy],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        return {"started": True, "seed": command.seed, "policy": command.policy}
 
     @app.websocket("/ws")
     async def snapshots(socket: WebSocket):

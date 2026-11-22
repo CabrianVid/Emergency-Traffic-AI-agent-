@@ -1,5 +1,6 @@
 import { Activity as ActivityIcon, ArrowRight, Check, ClipboardList, Radio, Signal, Timer, Truck } from 'lucide-react'
 import { BenchmarkResults } from './BenchmarkResults'
+import { MonteCarloResults } from './MonteCarloResults'
 import { clock, taskLabel, terminalStatuses, vehicleColors, vehicleStatus, words } from './model'
 import type { Activity, Metrics, Proposal, Snapshot, Stop, World } from './model'
 
@@ -110,7 +111,8 @@ export function Results({ metrics }: { metrics: Metrics }) {
   return <section className="panel results-panel">
     <header className="panel-head"><div className="section-title"><ActivityIcon size={16}/><h2>Run results</h2></div><span className="tag">Observed · simulated</span></header>
     <div className="results-body">
-      <BenchmarkResults/>
+      <MonteCarloResults/>
+      <details><summary>Historical benchmark (older policy definitions: A2 was signals only, A3 combined)</summary><BenchmarkResults/></details>
       <h3>Current live simulator session</h3>
       <div className="result-stats">
         <div><small>Civilian vehicles observed</small><strong>{metrics.civilian_observed}</strong></div>

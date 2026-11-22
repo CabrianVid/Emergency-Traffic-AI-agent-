@@ -24,6 +24,7 @@ Runs are resumable: a finished run directory is never repeated.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -56,6 +58,7 @@ from rescueflow.travel import SumoTravelTimeProvider
 POLICIES = ("B0", "A1", "A2")
 ALL_POLICIES = (*POLICIES, "R1", "B1")
 ROOT = Path("experiments/mc")
+BUNDLE = Path("experiments/published/montecarlo-2026-11-22")
 
 
 class FallbackUsed(RuntimeError):
@@ -373,8 +376,7 @@ def replay(root: Path, seed: int, policy: str, *, gui: bool, delay_ms: int) -> i
 
     The AI is never called: a decision that was not recorded stops the replay.
     Afterwards the observed responses are compared with the recorded ones."""
-    recorded_path = root / "runs" / f"{seed:04d}" / policy / "metrics.json"
-    recorded = json.loads(recorded_path.read_text(encoding="utf-8"))
+    recorded = json.loads(recorded_metrics(root, seed, policy).read_text(encoding="utf-8"))
     agent = DecisionAgent(cache_dir=root / "ai-cache", enabled=False) if policy in ("A1", "A2") else None
     folder = prepare(root, seed)
     print(f"Scenario {seed} {policy}: {recorded['density']} traffic, events {', '.join(recorded['event_types'])}", flush=True)
@@ -410,6 +412,58 @@ def replay(root: Path, seed: int, policy: str, *, gui: bool, delay_ms: int) -> i
     print("Replay reproduces the recorded responses." if same else
           f"Replay DIFFERS from the record.\n  recorded {recorded['calls']}\n  replayed {observed['calls']}")
     return 0 if same else 4
+
+
+# -- published bundle ------------------------------------------------------------
+
+
+def export(root: Path, bundle: Path) -> None:
+    """Small shareable copy: summary, one row per run, and what replay needs."""
+    report(root)
+    bundle.mkdir(parents=True, exist_ok=True)
+    summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+    scenarios: dict[int, dict] = {}
+    rows = []
+    for path in sorted(root.glob("runs/*/*/metrics.json")):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        item = scenarios.setdefault(row["seed"], {"seed": row["seed"], "density": row["density"],
+                                                  "events": row["event_types"], "policies": {}})
+        calls = row["calls"].values()
+        item["policies"][row["policy"]] = {
+            "valid": row["valid"], "mean_capped_s": round(scenario_score(row), 1),
+            "unreached": sum(c["response_s"] is None for c in calls), "calls": len(calls)}
+        rows.append([row["seed"], row["policy"], row["density"], row["valid"], round(scenario_score(row), 2),
+                     len(calls), sum(c["response_s"] is None for c in calls), row["critical_unreached"],
+                     row["reassignments"], row["equipment_completed"], row["equipment_total"],
+                     row["phases_shortened"], row["decision_sources"].get(SOURCE_AI, 0), row["ai_differs_from_rule"],
+                     row["git_sha"][:7], "; ".join(row["failures"])])
+    summary["scenarios"] = list(scenarios.values())
+    write_json(bundle / "summary.json", summary)
+    with (bundle / "runs.csv").open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["seed", "policy", "density", "valid", "mean_capped_s", "calls", "unreached", "critical_unreached",
+                         "reassignments", "equipment_completed", "equipment_total", "phases_shortened", "ai_decisions",
+                         "ai_differs_from_rule", "git_sha", "failures"])
+        writer.writerows(rows)
+    with zipfile.ZipFile(bundle / "replay-data.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for path in sorted([*root.glob("runs/*/*/metrics.json"), *root.glob("ai-cache/**/*.json")]):
+            archive.write(path, path.relative_to(root).as_posix())
+    print(f"{len(rows)} runs exported to {bundle}")
+
+
+def recorded_metrics(root: Path, seed: int, policy: str) -> Path:
+    """The record of one run, unpacked from the published bundle if needed."""
+    path = root / "runs" / f"{seed:04d}" / policy / "metrics.json"
+    archive = BUNDLE / "replay-data.zip"
+    if not path.exists() and root == ROOT and archive.exists():
+        with zipfile.ZipFile(archive) as bundle:
+            names = [n for n in bundle.namelist() if n.startswith("ai-cache/")]
+            wanted = f"runs/{seed:04d}/{policy}/metrics.json"
+            if wanted in bundle.namelist():
+                bundle.extractall(root, [wanted, *(n for n in names if not (root / n).exists())])
+    if not path.exists():
+        raise FileNotFoundError(f"No recorded run for scenario {seed} {policy}")
+    return path
 
 
 # -- report --------------------------------------------------------------------
@@ -505,13 +559,18 @@ def main() -> None:
     again.add_argument("--policy", choices=ALL_POLICIES, required=True)
     again.add_argument("--headless", action="store_true")
     again.add_argument("--delay", type=int, default=40, help="milliseconds per simulated second")
-    for item in (go, one, again, sub.add_parser("report")):
+    out = sub.add_parser("export")
+    out.add_argument("--bundle", type=Path, default=BUNDLE)
+    for item in (go, one, again, out, sub.add_parser("report")):
         item.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
     if args.command == "worker":
         sys.exit(worker(args.root, args.seed, args.policy))
     if args.command == "replay":
         sys.exit(replay(args.root, args.seed, args.policy, gui=not args.headless, delay_ms=args.delay))
+    if args.command == "export":
+        export(args.root, args.bundle)
+        return
     if args.command == "run":
         args.root.mkdir(parents=True, exist_ok=True)
         launch(args.root, range(args.scenarios), tuple(args.policies.split(",")), args.jobs)
