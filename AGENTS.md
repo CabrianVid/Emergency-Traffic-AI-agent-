@@ -55,7 +55,13 @@ demonstration. **Before writing any code:**
 - `docs/IMPLEMENTATION_STATUS.md` is the single place that must stay
   accurate after your change -- update it before you report done.
 
-## Reproduce the evaluation
+## Current benchmark
+
+`rescueflow.benchmark.montecarlo` (B0, B1, R1, A1, A2). Seeds 0-999 have been
+seen: evaluate any tuned change on fresh seeds. Never mix AI fallback runs into
+results, and report B1 whenever A1 is compared with B0.
+
+## Reproduce the older evaluation
 
 Read [EXPERIMENTS.md](docs/EXPERIMENTS.md) for matched Suite L and T commands
 and [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for presentation cues. Keep live

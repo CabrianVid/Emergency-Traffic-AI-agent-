@@ -70,7 +70,19 @@ The left panel explains the colors and shows live response times. See the
 [runbook](docs/RUNBOOK.md#native-sumo-2d-presentation) for the legend and
 reference results.
 
-## Run the evaluation
+## Results in one paragraph
+
+On 1,000 matched synthetic scenarios, AI dispatch (A1) responded 41 s faster than
+a nearest-unit baseline (B0), but a simple central waiting queue (B1) was another
+29 s faster than A1, with a tie on critical calls. The AI ranking itself added
+about 6 s and traffic-light priority added nothing measurable. See the
+[plain-English guide](docs/SIMPLE_SYSTEM_EXPLANATION.md#results).
+
+```powershell
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo run --scenarios 10 --policies B0,B1,R1,A1,A2 --jobs 8
+```
+
+## Run the older evaluation
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e '.[dashboard,benchmark,dev]'

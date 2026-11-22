@@ -1,4 +1,30 @@
-# Implementation status — final AdaHack handoff
+# Implementation status
+
+## Current: simplified decision flow (2026-11-22)
+
+Branch `simplify-decision-flow`. Plain-English guide with all results:
+[SIMPLE_SYSTEM_EXPLANATION.md](SIMPLE_SYSTEM_EXPLANATION.md).
+
+- **Working and verified in SUMO:** seven dashboard events, up to three ranked
+  options, approve/reject/recalculate, signal priority, live OpenAI ranking with
+  a labeled fallback, Monte Carlo benchmark, replay (headless and in the window,
+  from the dashboard and from a folder holding only the published bundle).
+- **Tests:** 68 pass (`pytest tests/ -q`), frontend builds. No automated test calls
+  the real API; live ranking was checked by hand and by the benchmark.
+- **Measured:** 5,000 runs, 4,996 valid. The B1 central-queue baseline beats AI
+  dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking
+  adds 5.6 s; signal priority adds nothing.
+- **Recommended next step:** offer B1's queue dispatch as an option to the AI and
+  decide again when a unit frees up, then evaluate on fresh seeds (1000+), since
+  seeds 0-999 have been seen.
+- **Limitations:** vehicle-delay estimates for a free unit count from time zero;
+  a breakdown inside a junction must wait a step; no latency sensitivity run; the
+  city-wide scene is an illustration with older policy names.
+
+Everything below describes earlier stages. It mentions removed features
+(helicopter, fog, hospital capacity) and older policy names.
+
+# Earlier: Implementation status — final AdaHack handoff
 
 Updated 2026-11-21. Verified on Windows 11, Python 3.13.9, Node 22,
 and Eclipse SUMO 1.28.0. Benchmark implementation checkpoint
