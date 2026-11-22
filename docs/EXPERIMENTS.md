@@ -27,13 +27,32 @@ delay and emergency driving rules across policies. The city settings
 disable junction collision checks. This limits safety conclusions
 about those intersections.
 
-The report gives a missed call a 900-second score and averages each
+The timing charts display B1, A1Q and A2Q. The report gives a missed
+call a 900-second score and averages each
 scenario equally. Percent improvement divides paired seconds saved by
 the paired reference mean. It also reports five-minute reach, P90 among
 reached calls, civilian delay, phase interventions and wins, ties and
 losses. The primary comparisons retain every valid matched pair and
 record invalid runs separately. The summary, Seaborn figures and CSVs
 are in the output root's `report/` folder.
+
+To reproduce the focused signal-priority tests, generate fresh traffic
+inputs and reuse them for matched A1Q and A2Q dispatch. Each case fixes
+one qualified unit and one critical call on a training-grid corridor.
+The two policies share blue-light privileges and dispatch delay.
+
+```powershell
+$run = 'experiments/mc-final-local'
+.\.venv\Scripts\python.exe -m rescueflow.benchmark run --suite traffic --seeds 1200:1211 --jobs 8 --output "$run/priority-stress"
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.priority_stress "$run/priority-stress" "$run/priority-dispatch" --jobs 12
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.final_report $run
+```
+
+The focused result appears separately in the last chart. Monthly impact
+uses the measured difference on calls reached by both policies. It scales
+the observed change by a hypothetical number of comparable calls per
+month. Survival would require local outcomes and a validated estimate of
+the effect of response-time changes on specific conditions.
 
 ## Monte Carlo benchmark (2026-11-22)
 

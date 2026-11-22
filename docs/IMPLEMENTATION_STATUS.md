@@ -4,15 +4,24 @@
 
 - Completed 680 headless SUMO 1.28.0 runs with Python 3.13.9. The grid ran
   110 seeds and Ljubljana ran 26. The audit accepted 667 runs and retained
-  all 13 invalid outcomes. The common valid cohort across all five
-  policies was 108 grid and 20 Ljubljana scenarios. Six consecutive
-  city reserve seeds were used to reach 20.
-- A2Q's paired capped response was 30.7% faster than B0 and 7.6% faster
-  than B1 on the grid. On Ljubljana roads it was 33.2% faster than B0
-  and 11.7% faster than B1. The direct green-wave comparison with A1Q
-  was within 0.4% on either map, with both paired intervals spanning
+  all 13 invalid outcomes. The displayed comparison includes B1, A1Q
+  and A2Q. Their common valid cohort is 109 grid and 24 Ljubljana
+  scenarios. Six consecutive city reserve seeds were used in the
+  original five-policy evaluation.
+- A2Q's paired capped response was 7.6% faster than B1 on the grid and
+  11.7% faster on Ljubljana roads. The direct green-wave comparison with
+  A1Q was within 0.4% on either map, with both paired intervals spanning
   zero. Ljubljana's roads are real OSM geometry with synthetic demand,
   incidents and signal timing.
+- Separate signal-focused runs fixed the critical call, qualified ambulance,
+  dispatch delay and civilian traffic for each pair. All 24 A1Q/A2Q pairs
+  were valid. A2Q was 13.7% faster on the eastbound corridor and 14.0%
+  faster on the northbound corridor. These corridor tests are separate
+  from the mixed-call results.
+- On Ljubljana calls that both B1 and A2Q reached, A2Q saved 28.9 observed
+  seconds per call (92 calls). At 1,000 comparable calls per month, the
+  illustrative projection is 8.0 aggregate hours of waiting saved. It
+  uses observed arrival times and does not estimate outcomes or lives saved.
 - The frozen source, manifests, per-run observations and four Seaborn
   timing charts are under `experiments/mc-final-2026-11-22/`. The combined
   report is in `report/results.md`. Code and seed commands are in

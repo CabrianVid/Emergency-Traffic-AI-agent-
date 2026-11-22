@@ -24,9 +24,9 @@ from rescueflow.benchmark.inputs import digest
 
 MAPS = {"grid": "Training grid", "ljubljana": "Ljubljana"}
 POLICIES = {
-    "B0": "Nearest unit", "B1": "Central queue", "R1Q": "Rule-ranked", "A1Q": "AI-ranked", "A2Q": "AI + green wave",
+    "B1": "Central queue", "A1Q": "AI-ranked", "A2Q": "AI + green wave",
 }
-PALETTE = dict(zip(POLICIES, ("#5676A2", "#8494AC", "#8D71AD", "#458D7D", "#D28450")))
+PALETTE = {"B1": "#5676A2", "A1Q": "#458D7D", "A2Q": "#D28450"}
 BACKGROUND, PANEL, TEXT, MUTED = "#FBFCFF", "#EBEDF5", "#1D293C", "#586680"
 GOOD, BAD = "#2C865E", "#BB5261"
 CAP, TARGET = 900, 300
@@ -199,7 +199,7 @@ def response_histogram(calls: pd.DataFrame, folder: Path) -> None:
                        "Percentage of calls in each one-minute bin, shown separately for each policy.",
                        height=5.95, top=.63)
     handles = [Line2D([0], [0], color=color, lw=3, label=key) for key, color in PALETTE.items()]
-    fig.legend(handles=handles, loc="center", bbox_to_anchor=(.50, .693), ncol=5,
+    fig.legend(handles=handles, loc="center", bbox_to_anchor=(.50, .693), ncol=len(POLICIES),
                frameon=False, handletextpad=.5, columnspacing=1.8)
     upper = 0.0
     for ax, (network, label) in zip(axes, MAPS.items()):
@@ -255,17 +255,17 @@ def response_bars(summary: pd.DataFrame, folder: Path, *, target: bool) -> None:
         ax.set_title(f"{label}  ·  {int(frame['scenarios'].iloc[0])} matched scenarios", loc="left",
                      weight="bold", pad=10)
     filename = "03-five-minute-target" if target else "02-average-response-time"
-    note = ("Both maps use synthetic incidents and demand. Cohorts are matched across all five policies within each map."
+    note = ("Both maps use synthetic incidents and demand. Cohorts are matched across the three displayed policies within each map."
             if target else "Response times are capped at 15 minutes. Missed calls receive the full 15-minute score.")
     save(fig, folder, filename, note)
 
 
-def paired_effects(pairs: pd.DataFrame, folder: Path) -> None:
+def paired_effects(pairs: pd.DataFrame, stress: pd.DataFrame, folder: Path) -> None:
     contrasts = list(combinations(POLICIES, 2))
     fig, axes = canvas("How much response time did each policy save?",
                        "Positive percentages mean faster response. Each comparison uses the same valid scenarios for both policies.",
                        height=8.5, top=.71)
-    fig.subplots_adjust(bottom=.145, left=.11, wspace=.34)
+    fig.subplots_adjust(bottom=.445 if not stress.empty else .145, left=.11, wspace=.34)
     high = max(float(pairs[["saved_pct", "ci_low_pct", "ci_high_pct"]].abs().max().max()), 8)
     limit = high * 1.27
     for ax, (network, label) in zip(axes, MAPS.items()):
@@ -280,7 +280,7 @@ def paired_effects(pairs: pd.DataFrame, folder: Path) -> None:
             if pd.notna(row["ci_low_pct"]):
                 ax.hlines(y, row["ci_low_pct"], row["ci_high_pct"], color="#8494AC", lw=2.0)
             offset = 9 if -limit * .7 < x < limit * .6 or x < -limit * .85 else -9
-            ax.annotate(f"{x:+.1f}%  ·  n={int(row['pairs'])}", (x, y), xytext=(offset, 1),
+            ax.annotate(f"{x:+.1f}%  ·  n={int(row['pairs'])}", (x, y), xytext=(offset, 10),
                         textcoords="offset points", va="center", ha="left" if offset > 0 else "right",
                         color=TEXT, size=8.5, weight="bold", zorder=4)
         if points:
@@ -294,11 +294,76 @@ def paired_effects(pairs: pd.DataFrame, folder: Path) -> None:
         ax.xaxis.set_major_locator(MaxNLocator(7))
         ax.xaxis.set_major_formatter(PercentFormatter(100, decimals=0))
         ax.set_title(label, loc="left", weight="bold", pad=12)
+    if not stress.empty:
+        fig.text(.11, .355, "Controlled corridor tests  ·  A1Q → A2Q",
+                 weight="bold", size=12, color=TEXT)
+        corridor_names = {"east-low": "Eastbound · light", "north-peak": "Northbound · peak"}
+        focus = stress.assign(approach=stress["corridor"].map(corridor_names))
+        ax = fig.add_axes((.245, .144, .655, .178))
+        sns.barplot(focus, x="percent_saved", y="approach", color=PALETTE["A2Q"], ax=ax,
+                    errorbar=None, width=.60, edgecolor=BACKGROUND)
+        furthest = max(float(focus["percent_saved"].abs().max()), 1.0)
+        for index, row in enumerate(focus.itertuples()):
+            x = row.percent_saved
+            ax.text(x + (.04 if x >= 0 else -.04) * furthest, index,
+                    f"{x:+.1f}%  ·  n={row.valid_pairs}", ha="left" if x >= 0 else "right",
+                    va="center", size=9, weight="bold")
+        ax.axvline(0, color="#7886A2", lw=1.0, ls="--")
+        ax.set(xlim=(min(0, focus["percent_saved"].min()) - furthest * .27,
+                     max(0, focus["percent_saved"].max()) + furthest * .45),
+               xlabel="Response time saved on the training grid", ylabel="")
+        ax.xaxis.set_major_formatter(PercentFormatter(100, decimals=0))
     save(fig, folder, "04-paired-response-improvement",
-         "Dots show the mean percentage change. Lines show 95% paired bootstrap intervals for comparisons with at least 20 valid pairs.")
+         "The mixed-call results above show 95% paired intervals. The corridor results isolate signal priority and are descriptive.")
 
 
-def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) -> str:
+def monthly_impact(calls: pd.DataFrame) -> pd.DataFrame:
+    """Real arrival times for calls reached by both policies, without cutoff penalties."""
+    arrivals = calls[calls["valid"] & calls["policy"].isin(["B1", "A2Q"])]
+    matched = arrivals.pivot(index=["map", "seed", "call_id"], columns="policy", values="response_s").dropna()
+    output = []
+    for network, cohort in matched.groupby(level="map"):
+        saving = (cohort["B1"] - cohort["A2Q"]).mean()
+        output.append({
+            "map": network, "jointly_reached_calls": len(cohort), "mean_seconds_saved": saving,
+            "relative_pct_saved": 100 * saving / cohort["B1"].mean(),
+            "hours_per_100_calls": saving * 100 / 3600, "hours_per_1000_calls": saving * 1000 / 3600,
+        })
+    return pd.DataFrame(output)
+
+
+def signal_stress(root: Path) -> pd.DataFrame:
+    """Read the dedicated paired A1Q/A2Q corridor tests if they were run."""
+    data = []
+    for corridor in sorted(path for path in root.glob("*") if path.is_dir()):
+        inputs = sorted((corridor / "inputs").glob("*/manifest.json"))
+        if not inputs:
+            continue
+        normal, priority, phases = [], [], 0
+        for manifest in inputs:
+            paths = [corridor / "runs" / manifest.parent.name / p / "metrics.json" for p in ("A1Q", "A2Q")]
+            if not all(path.is_file() for path in paths):
+                continue
+            a, b = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+            if not all(row["valid"] and not row["ambulance_collisions"] for row in (a, b)):
+                continue
+            normal.append(a["calls"]["CALL-1"]["capped_s"])
+            priority.append(b["calls"]["CALL-1"]["capped_s"])
+            phases += b["phases_shortened"]
+        a_mean = float(np.mean(normal)) if normal else np.nan
+        b_mean = float(np.mean(priority)) if priority else np.nan
+        data.append({
+            "corridor": corridor.name, "planned_pairs": len(inputs), "valid_pairs": len(normal),
+            "A1Q_mean_response_s": a_mean, "A2Q_mean_response_s": b_mean,
+            "seconds_saved": a_mean - b_mean,
+            "percent_saved": 100 * (1 - b_mean / a_mean) if a_mean > 0 else np.nan,
+            "A2Q_phases_shortened": phases,
+        })
+    return pd.DataFrame(data)
+
+
+def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame, impact: pd.DataFrame,
+                stress: pd.DataFrame) -> str:
     lines = [
         "# RescueFlow · matched SUMO evaluation", "",
         "The grid uses synthetic roads. Ljubljana uses real OpenStreetMap road geometry with simulated signals,",
@@ -312,7 +377,7 @@ def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) 
     if city_count > 20:
         lines.extend([
             f"Ljubljana attempted {city_count} seeds. Reserve seeds were added in numerical order after",
-            "ambulance collisions reduced the number of scenarios valid under every policy.", "",
+            "ambulance collisions reduced the number of scenarios valid in the original evaluation.", "",
         ])
     lines.extend(["## Results and audit", ""])
     for key, title in MAPS.items():
@@ -361,7 +426,32 @@ def report_text(runs: pd.DataFrame, summary: pd.DataFrame, pairs: pd.DataFrame) 
         lines.append(f"| {MAPS[r['map']]} / {r.reference} → {r.candidate} | {r.saved_pct:+.1f}% | "
                      f"{r.omit_one_low_pct:+.1f}% to {r.omit_one_high_pct:+.1f}% | "
                      f"{r.largest_loss_seed} | {r.civilian_delay_saved_pct:+.1f}% |")
+    lines.extend([
+        "", "## Illustrative monthly response-time impact", "",
+        "A2Q compared with B1 on calls reached by both. These figures scale the simulated change assuming",
+        "the same mix of calls and the same average gain per call. They measure aggregate patient wait",
+        "time and cannot estimate lives saved.", "",
+        "| Map | Jointly reached calls | Mean measured difference | Per 100 calls/month | Per 1,000 calls/month |",
+        "|---|---:|---:|---:|---:|",
+    ])
+    for _, row in impact.iterrows():
+        lines.append(f"| {MAPS[row['map']]} | {row.jointly_reached_calls} | "
+                     f"{row.mean_seconds_saved:+.1f} s | {row.hours_per_100_calls:+.2f} h | {row.hours_per_1000_calls:+.2f} h |")
     lines.append("")
+    if not stress.empty:
+        lines.extend([
+            "## Signal-priority corridor test", "",
+            "One critical call and one qualified available unit per run. Both policies use identical",
+            "civilian routes, departure times and blue-light privileges, plus the same dispatch delay.",
+            "This focused test is reported separately from the mixed-call benchmark.", "",
+            "| Corridor | Valid / planned pairs | A1Q | A2Q | Response saved | Phases shortened |",
+            "|---|---:|---:|---:|---:|---:|",
+        ])
+        for row in stress.itertuples():
+            lines.append(f"| {row.corridor} | {row.valid_pairs}/{row.planned_pairs} | "
+                         f"{row.A1Q_mean_response_s:.1f} s | {row.A2Q_mean_response_s:.1f} s | "
+                         f"{row.seconds_saved:+.1f} s ({row.percent_saved:+.1f}%) | {row.A2Q_phases_shortened} |")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -374,17 +464,21 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     runs, calls = read_runs(args.root)
     summary, shared, pairs, effects, density = summarize(runs, calls)
+    impact = monthly_impact(calls)
+    stress = signal_stress(args.root / "priority-dispatch")
     for title, table in (
         ("runs", runs), ("calls", calls), ("policy-summary", summary), ("paired-comparisons", pairs),
-        ("scenario-differences", effects), ("by-density", density),
+        ("scenario-differences", effects), ("by-density", density), ("monthly-impact", impact),
     ):
         table.to_csv(output / f"{title}.csv", index=False, float_format="%.5f")
-    (output / "results.md").write_text(report_text(runs, summary, pairs), encoding="utf-8")
+    if not stress.empty:
+        stress.to_csv(output / "priority-stress.csv", index=False, float_format="%.5f")
+    (output / "results.md").write_text(report_text(runs, summary, pairs, impact, stress), encoding="utf-8")
     style()
     response_histogram(shared, output)
     response_bars(summary, output, target=False)
     response_bars(summary, output, target=True)
-    paired_effects(pairs, output)
+    paired_effects(pairs, stress, output)
     with ZipFile(output / "rescueflow-benchmark.zip", "w", compression=ZIP_DEFLATED) as bundle:
         for pattern in ("*.png", "*.csv", "results.md"):
             for artifact in sorted(output.glob(pattern)):
