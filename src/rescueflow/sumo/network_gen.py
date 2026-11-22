@@ -29,7 +29,9 @@ _BACKGROUND_FLOWS = [
 ]
 
 
-def prepare_ljubljana_network(source: Path, net: Path) -> None:
+def prepare_ljubljana_network(
+    source: Path, net: Path, extra_args: tuple[str, ...] = (), *, guess_signals: bool = True,
+) -> None:
     """Build the shared Ljubljana road geometry from the bundled OSM extract."""
     if not source.exists():
         raise FileNotFoundError("Ljubljana OpenStreetMap road extract is missing.")
@@ -41,9 +43,9 @@ def prepare_ljubljana_network(source: Path, net: Path) -> None:
     subprocess.run(
         [
             str(netconvert), "--osm-files", str(source), "--keep-edges.by-vclass", "passenger",
-            "--geometry.remove", "--tls.guess-signals", "--tls.yellow.time", "3",
+            "--geometry.remove", *(("--tls.guess-signals",) if guess_signals else ()), "--tls.yellow.time", "3",
             "--tls.allred.time", "1", "--output.street-names", "true",
-            "--output-file", str(net), "--no-warnings", "true",
+            "--output-file", str(net), "--no-warnings", "true", *extra_args,
         ],
         check=True, capture_output=True, text=True, timeout=60,
     )

@@ -89,6 +89,9 @@ class LogisticsRun:
         self.report_times: dict[str, float] = {}
         self.planned: dict[str, dict] = {}
         self.at_risk: set[str] = set()
+        # Optional read-only observer called after every simulated step
+        # (used by the SUMO GUI presentation to draw markers).
+        self.on_step = None
 
     def log(self, kind: str, **fields):
         self.events.append({"kind": kind, "sim_time_s": self.world.sim_time_s, **fields})
@@ -196,7 +199,7 @@ class LogisticsRun:
         while self.world.sim_time_s < horizon:
             now = self.world.sim_time_s
             for incident in pending[:]:
-                ready = incident.get("time_s") == now
+                ready = incident.get("time_s") is not None and incident["time_s"] <= now
                 if "after_task" in incident:
                     task = self.world.tasks.get(incident["after_task"])
                     asset = self.world.assets["K1"]
@@ -222,6 +225,8 @@ class LogisticsRun:
                     "completed": sum(t.status == TaskStatus.completed for t in self.world.tasks.values()),
                 })
             self.controller.step(self.world, capture_positions=False)
+            if self.on_step is not None:
+                self.on_step(self)
         for incident in pending:
             if "after_task" in incident:
                 self.at_risk.add(incident["payload"]["task_id"])

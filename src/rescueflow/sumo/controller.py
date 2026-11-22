@@ -24,6 +24,7 @@ re-adding is unambiguous and testable.
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -73,6 +74,13 @@ class TraciSimulationController:
         self._next_stop_ptr: dict[str, int] = {}
         self._was_stopped: dict[str, bool] = {}
         self._civilian_loss_s: dict[str, float] = {}
+        self._gui_markers: dict[str, dict] = {}
+        self._spawn_origin: dict[str, tuple[str | None, dict]] = {}
+        self._awaiting_insertion: dict[str, tuple] = {}
+        # Opt-in (presentation): commit a plan while a unit is inside a
+        # junction and install its route as soon as it reaches a road edge.
+        self.defer_junction_reroutes = False
+        self._deferred_reroutes: set[str] = set()
 
     # -- connection lifecycle -------------------------------------------------
 
@@ -118,6 +126,7 @@ class TraciSimulationController:
             ]
         traci.start(args)
         self._connected = True
+        self._gui_markers.clear()
         self._ensure_travel().set_closed_edges(world.closed_edges)
         if resume:
             self._rebuild_queues_from_world(world)
@@ -133,21 +142,64 @@ class TraciSimulationController:
         traci.close()
         self._connected = False
 
-    def set_gui_label(self, poi_id: str, text: str) -> None:
-        """Update the text of a presentation marker in an open SUMO GUI."""
+    # -- presentation-only GUI drawing (never changes simulated behavior) ------
+
+    def gui_marker(
+        self, poi_id: str, xy: tuple[float, float] | None, *, label: str | None = None,
+        color: tuple[int, ...] | None = None, size: float | None = None, layer: float = 5.0,
+        image: str = "",
+    ) -> None:
+        """Create or update a SUMO-GUI point of interest. `xy=None` hides it."""
         import traci
 
-        traci.poi.setParameter(poi_id, "label", text)
+        x, y = xy if xy is not None else (-10_000.0, -10_000.0)
+        if poi_id not in self._gui_markers:
+            traci.poi.add(poi_id, x, y, color or (255, 255, 255, 255), layer=layer, imgFile=image,
+                          width=size or 1.0, height=size or 1.0)
+            self._gui_markers[poi_id] = {}
+        state = self._gui_markers[poi_id]
+        if state.get("xy") != (x, y):
+            traci.poi.setPosition(poi_id, x, y)
+            state["xy"] = (x, y)
+        if color is not None and state.get("color") != color:
+            traci.poi.setColor(poi_id, color)
+            state["color"] = color
+        if size is not None and state.get("size") != size:
+            traci.poi.setWidth(poi_id, size)
+            traci.poi.setHeight(poi_id, size)
+            state["size"] = size
+        if label is not None and state.get("label") != label:
+            traci.poi.setParameter(poi_id, "label", label)
+            state["label"] = label
 
-    def place_gui_label_by_vehicle(self, poi_id: str, vehicle_id: str, offset: tuple[float, float]) -> None:
-        """Follow a live SUMO vehicle, moving the marker off-screen when absent."""
+    def gui_vehicle_view(self, colors: dict[str, tuple[int, int, int, int]]) -> dict[str, tuple[float, float]]:
+        """Recolor live fleet vehicles and return their actual SUMO positions."""
         import traci
 
-        if vehicle_id in traci.vehicle.getIDList():
-            x, y = traci.vehicle.getPosition(vehicle_id)
-            traci.poi.setPosition(poi_id, x + offset[0], y + offset[1])
-        else:
-            traci.poi.setPosition(poi_id, -100, -100)
+        live = set(traci.vehicle.getIDList())
+        positions = {}
+        for vehicle_id, color in colors.items():
+            if vehicle_id in live:
+                traci.vehicle.setColor(vehicle_id, color)
+                positions[vehicle_id] = traci.vehicle.getPosition(vehicle_id)
+        return positions
+
+    def gui_signal_position(self, tls_id: str) -> tuple[float, float]:
+        """Position of a signal's first controlled stop line."""
+        import traci
+
+        lane = traci.trafficlight.getControlledLanes(tls_id)[0]
+        return tuple(traci.lane.getShape(lane)[-1][:2])
+
+    def gui_frame(self, bounds: tuple[float, float, float, float]) -> None:
+        import traci
+
+        traci.gui.setBoundary("View #0", *bounds)
+
+    def gui_screenshot(self, path: Path) -> None:
+        import traci
+
+        traci.gui.screenshot("View #0", str(path))
 
     def close(self) -> None:
         if not self._connected:
@@ -165,6 +217,9 @@ class TraciSimulationController:
         self._was_stopped.clear()
         self.event_log.clear()
         self._civilian_loss_s.clear()
+        self._spawn_origin.clear()
+        self._awaiting_insertion.clear()
+        self._deferred_reroutes.clear()
 
     # -- route/stop bookkeeping ------------------------------------------------
 
@@ -279,8 +334,12 @@ class TraciSimulationController:
         if not stops:
             return
         live = vehicle.id in traci.vehicle.getIDList()
-        start_edge = None
-        depart_kwargs = {}
+        # A re-added vehicle can wait in SUMO's insertion queue while traffic
+        # blocks its position. Replace that queued insertion from the same
+        # origin instead of adding a second vehicle with the same ID.
+        queued = not live and vehicle.id in traci.simulation.getPendingVehicles()
+        start_edge, depart_kwargs = self._spawn_origin.get(vehicle.id, (None, {})) if queued else (None, {})
+        depart_kwargs = dict(depart_kwargs)
         if live:
             start_edge = traci.vehicle.getRoadID(vehicle.id)
             if start_edge.startswith(":"):
@@ -294,16 +353,96 @@ class TraciSimulationController:
         edges, stop_plan = self._build_route(world, vehicle, stops, start_node=vehicle.node_id, start_edge=start_edge)
         route_id = f"route_{vehicle.id}_{uuid.uuid4().hex[:8]}"
         traci.route.add(route_id, edges)
-        if live:
+        placements = self._stop_placements(edges, stop_plan)
+        type_id = self._vtype_for_stops(world, stops)
+        resumed = "departSpeed" in depart_kwargs
+        if resumed:
+            # A unit rerouted while standing at (or just past) a stop on its
+            # current edge: SUMO only accepts stops downstream of the
+            # re-insertion point, so keep those stops just ahead of it.
+            ahead = float(depart_kwargs["departPos"])
+            adjusted = []
+            for order, (lane, position, entry) in enumerate(placements):
+                if entry["route_index"] == 0 and position <= ahead + 0.1 * order:
+                    position = min(lane.getLength(), ahead + 0.1 * (order + 1))
+                adjusted.append((lane, position, entry))
+            placements = adjusted
+        if resumed and float(depart_kwargs["departSpeed"]) > traci.vehicletype.getMaxSpeed(type_id):
+            # A unit that loses its critical leg leaves blue-light mode and
+            # re-enters at the routine type's maximum speed.
+            depart_kwargs["departSpeed"] = f"{traci.vehicletype.getMaxSpeed(type_id):.2f}"
+        if resumed and placements and stop_plan[0]["route_index"] == 0:
+            # Re-inserting a moving vehicle just before a stop on its current
+            # edge: SUMO rejects the insertion ("too close to brake") and the
+            # vehicle silently never departs. Cap the re-insertion speed so
+            # SUMO's own insertion brake gap (v*tau + v^2/2d) fits, and record it.
+            gap = placements[0][1] - float(depart_kwargs["departPos"])
+            speed = float(depart_kwargs["departSpeed"])
+            decel = traci.vehicletype.getDecel(type_id)
+            tau = traci.vehicletype.getTau(type_id)
+            usable = max(0.0, gap - 2.0)
+            limit = decel * (math.sqrt(tau * tau + 2 * usable / decel) - tau) if gap >= 0 else speed
+            if speed > limit:
+                depart_kwargs["departSpeed"] = f"{limit:.2f}"
+                self.event_log.append({
+                    "sim_time_s": world.sim_time_s, "kind": "reroute_speed_capped", "vehicle_id": vehicle.id,
+                    "edge_id": start_edge, "gap_m": round(gap, 2), "from_mps": round(speed, 2),
+                    "to_mps": round(limit, 2),
+                })
+        if live or queued:
             traci.vehicle.remove(vehicle.id)
+        self._insert_vehicle(vehicle.id, route_id, type_id, depart_kwargs, placements)
+        self._spawn_origin[vehicle.id] = (start_edge, dict(depart_kwargs))
+        if "departSpeed" in depart_kwargs:
+            self._awaiting_insertion[vehicle.id] = (route_id, type_id, dict(depart_kwargs), placements)
+
+        self._stop_queue[vehicle.id] = [
+            {"stop_id": e["stop_id"], "task_id": e["task_id"], "stop_kind": e["stop_kind"]} for e in stop_plan
+        ]
+        self._next_stop_ptr[vehicle.id] = 0
+        self._was_stopped[vehicle.id] = False
+
+    def _insert_vehicle(self, vehicle_id: str, route_id: str, type_id: str, depart_kwargs: dict,
+                        placements: list[tuple]) -> None:
+        import traci  # noqa: PLC0415
+
         traci.vehicle.add(
-            vehicle.id, route_id, typeID=self._vtype_for_stops(world, stops),
+            vehicle_id, route_id, typeID=type_id,
             depart=str(traci.simulation.getTime()), departLane="best", **depart_kwargs
         )
+        for stop_index, (lane, position, entry) in enumerate(placements):
+            traci.vehicle.insertStop(
+                vehicle_id, stop_index, entry["edge_id"], pos=position,
+                laneIndex=lane.getIndex(), duration=entry["duration"], flags=0,
+            )
+
+    def _retry_blocked_insertions(self, world: WorldState, traci) -> None:
+        """A resumed vehicle whose exact speed SUMO cannot insert (slow
+        leader, red signal, nearby stop) would stay queued and invisible.
+        Re-insert it once at SUMO's maximum safe speed and record that."""
+        if not self._awaiting_insertion:
+            return
+        pending = set(traci.simulation.getPendingVehicles())
+        for vehicle_id, (route_id, type_id, kwargs, placements) in list(self._awaiting_insertion.items()):
+            del self._awaiting_insertion[vehicle_id]
+            if vehicle_id not in pending:
+                continue
+            traci.vehicle.remove(vehicle_id)
+            relaxed = {**kwargs, "departSpeed": "max"}
+            self._insert_vehicle(vehicle_id, route_id, type_id, relaxed, placements)
+            self._spawn_origin[vehicle_id] = (self._spawn_origin.get(vehicle_id, (None, {}))[0], relaxed)
+            self.event_log.append({
+                "sim_time_s": world.sim_time_s, "kind": "reinsertion_speed_relaxed", "vehicle_id": vehicle_id,
+                "requested_mps": kwargs["departSpeed"],
+            })
+
+    def _stop_placements(self, edges: list[str], stop_plan: list[dict]) -> list[tuple]:
+        """(lane, position, entry) for every planned stop, in route order."""
         net = self._ensure_travel().net
         occurrences = Counter(entry["edge_id"] for entry in stop_plan)
         placed: Counter = Counter()
-        for stop_index, entry in enumerate(stop_plan):
+        placements = []
+        for entry in stop_plan:
             edge = net.getEdge(entry["edge_id"])
             index = entry["route_index"] + 1
             connections = edge.getOutgoing().get(net.getEdge(edges[index]), []) if index < len(edges) else []
@@ -319,16 +458,8 @@ class TraciSimulationController:
             else:
                 position = min(lane.getLength() * 0.99, position + spacing * placed[edge_id])
             placed[edge_id] += 1
-            traci.vehicle.insertStop(
-                vehicle.id, stop_index, entry["edge_id"], pos=position,
-                laneIndex=lane.getIndex(), duration=entry["duration"], flags=0,
-            )
-
-        self._stop_queue[vehicle.id] = [
-            {"stop_id": e["stop_id"], "task_id": e["task_id"], "stop_kind": e["stop_kind"]} for e in stop_plan
-        ]
-        self._next_stop_ptr[vehicle.id] = 0
-        self._was_stopped[vehicle.id] = False
+            placements.append((lane, position, entry))
+        return placements
 
     def _vtype_for_stops(self, world: WorldState, stops: list) -> str:
         """`ambulance` (real vClass=emergency privileges) iff any stop in
@@ -402,7 +533,13 @@ class TraciSimulationController:
                 continue
             served = sum(1 for s in vehicle.route_stops if s.service_completed_at_s is not None)
             remaining = vehicle.route_stops[served:]
-            if remaining:
+            if remaining and self.defer_junction_reroutes and (vehicle.sumo_edge_id or "").startswith(":"):
+                # Committed now; installed in SUMO once the unit leaves the junction.
+                self._deferred_reroutes.add(vehicle_id)
+                self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "reroute_deferred_in_junction",
+                                       "vehicle_id": vehicle_id, "edge_id": vehicle.sumo_edge_id})
+            elif remaining:
+                self._deferred_reroutes.discard(vehicle_id)
                 self._establish_route(world, vehicle, remaining)
                 any_established = True
             else:
@@ -414,11 +551,35 @@ class TraciSimulationController:
         if standalone:
             self.save_and_close()
 
+    def _edge_after_junction(self, vehicle_id: str) -> str:
+        import traci  # noqa: PLC0415
+
+        route = traci.vehicle.getRoute(vehicle_id)
+        return route[min(traci.vehicle.getRouteIndex(vehicle_id) + 1, len(route) - 1)]
+
+    def _apply_deferred_reroutes(self, world: WorldState, traci) -> None:
+        if not self._deferred_reroutes:
+            return
+        live = set(traci.vehicle.getIDList())
+        for vehicle_id in sorted(self._deferred_reroutes):
+            if vehicle_id not in live:
+                self._deferred_reroutes.discard(vehicle_id)
+                continue
+            if traci.vehicle.getRoadID(vehicle_id).startswith(":"):
+                continue
+            self._deferred_reroutes.discard(vehicle_id)
+            vehicle = world.vehicles[vehicle_id]
+            remaining = [s for s in vehicle.route_stops if s.service_completed_at_s is None]
+            if remaining and vehicle.status != VehicleStatus.broken:
+                self._establish_route(world, vehicle, remaining)
+
     def _remove_vehicle(self, vehicle_id: str) -> None:
         import traci
 
-        if vehicle_id in traci.vehicle.getIDList():
+        if vehicle_id in traci.vehicle.getIDList() or vehicle_id in traci.simulation.getPendingVehicles():
             traci.vehicle.remove(vehicle_id)
+        self._spawn_origin.pop(vehicle_id, None)
+        self._awaiting_insertion.pop(vehicle_id, None)
         self._stop_queue.pop(vehicle_id, None)
         self._next_stop_ptr.pop(vehicle_id, None)
         self._was_stopped.pop(vehicle_id, None)
@@ -437,7 +598,9 @@ class TraciSimulationController:
                 continue
             start_edge = vehicle.sumo_edge_id
             if start_edge and start_edge.startswith(":"):
-                raise ValueError(f"{vehicle_id} is in a junction. Advance one step and retry.")
+                if not self.defer_junction_reroutes:
+                    raise ValueError(f"{vehicle_id} is in a junction. Advance one step and retry.")
+                start_edge = self._edge_after_junction(vehicle_id)
             routes[vehicle_id], _ = self._build_route(world, vehicle, remaining, vehicle.node_id, start_edge)
         return routes
 
@@ -529,6 +692,8 @@ class TraciSimulationController:
             traci.simulationStep()
             world.sim_time_s = traci.simulation.getTime()
             world.bump_telemetry()
+            self._retry_blocked_insertions(world, traci)
+            self._apply_deferred_reroutes(world, traci)
             if self.observations_dir is not None:
                 for ids, kind in (
                     (traci.simulation.getStartingTeleportIDList(), "teleport_started"),
@@ -621,12 +786,6 @@ class TraciSimulationController:
                 )
             except Exception:  # noqa: BLE001 -- best-effort; setSpeed(0) above still applies
                 pass
-
-        positions = {
-            vid: {"edge": traci.vehicle.getRoadID(vid), "pos": traci.vehicle.getLanePosition(vid)}
-            for vid in traci.vehicle.getIDList()
-        }
-        return SimulationSnapshot(telemetry_seq=world.telemetry_seq, sim_time_s=world.sim_time_s, vehicle_positions=positions)
 
     def _process_arrivals_and_stops(self, world: WorldState, traci) -> None:
         arrived = set(traci.simulation.getArrivedIDList())
@@ -773,7 +932,7 @@ class TraciSimulationController:
     def _run_green_wave(self, world: WorldState, traci) -> None:
         self._ensure_travel().set_closed_edges(world.closed_edges)
         live = set(traci.vehicle.getIDList())
-        eligible: dict[str, int] = dict.fromkeys(self.priority_probe_ids & live, 0)
+        eligible: dict[str, int] = dict.fromkeys(sorted(self.priority_probe_ids & live), 0)
         for vehicle_id, vehicle in world.vehicles.items():
             if vehicle_id not in live or vehicle.status == VehicleStatus.broken:
                 continue

@@ -31,6 +31,7 @@ from rescueflow.planning.validator import DefaultPlanValidator
 from rescueflow.models.core import PlanProposal, VehiclePlan, ScoreBreakdown
 
 _stop_counter = itertools.count(1)
+_PRIORITY_RANK = {TaskPriority.critical: 0, TaskPriority.high: 1, TaskPriority.routine: 2}
 
 
 def next_stop_id(vehicle_id: str) -> str:
@@ -131,13 +132,26 @@ def try_insert(
     validator: DefaultPlanValidator,
     vehicle: Vehicle,
     task: Task,
+    *,
+    keep_priority_order: bool = False,
 ) -> list[InsertionCandidate]:
-    """All feasible insertion points for `task` on `vehicle`, cheapest first."""
+    """All feasible insertion points for `task` on `vehicle`, cheapest first.
+
+    With `keep_priority_order`, `task` is never placed ahead of a pending
+    pickup of a strictly more urgent task on the same vehicle (A1's
+    `urgent_first` profile: routine work must not delay a critical response)."""
     unlocked, start = _unlocked_slice(vehicle)
     locked_prefix = list(vehicle.route_stops[:start])
     candidates: list[InsertionCandidate] = []
+    rank = _PRIORITY_RANK[task.priority]
 
     for i in range(len(unlocked) + 1):
+        if keep_priority_order and any(
+            stop.kind == StopKind.pickup and stop.service_completed_at_s is None and stop.task_id in world.tasks
+            and _PRIORITY_RANK[world.tasks[stop.task_id].priority] < rank
+            for stop in unlocked[i:]
+        ):
+            continue
         # Fresh copies every iteration: recompute_tail mutates Stop objects
         # in place, and trial candidates (and `vehicle.route_stops` itself)
         # must never share object identity with each other across trials.
@@ -194,6 +208,7 @@ def greedy_insert_all(
     policy: str = "",
     profile: str = "",
     nearest_available_emergency: bool = False,
+    keep_priority_order: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Insert each task, in the given order, into the single cheapest
     feasible vehicle+position across the whole fleet, mutating
@@ -221,7 +236,7 @@ def greedy_insert_all(
             busy = vehicle.available_after_s > world.sim_time_s or any(
                 stop.service_completed_at_s is None for stop in vehicle.route_stops
             )
-            candidates = try_insert(world, travel, validator, vehicle, task)
+            candidates = try_insert(world, travel, validator, vehicle, task, keep_priority_order=keep_priority_order)
             if emergency and busy:
                 # Queue behind existing work when every suitably qualified
                 # unit is committed. Never make this fallback displace it.

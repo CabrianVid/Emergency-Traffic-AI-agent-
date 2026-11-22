@@ -14,7 +14,9 @@ collapses to the same plan as another, both are still reported so the
 operator can see they agree):
 
 - `urgent_first`: insert critical/high tasks before routine ones, accepting
-  extra churn/travel to get them served sooner.
+  extra churn/travel to get them served sooner. A later, less urgent
+  insertion may not be placed ahead of a pending more urgent pickup on the
+  same vehicle (otherwise a routine transfer could delay a critical response).
 - `minimum_disruption`: insert in original call order, then run a bounded
   swap/relocate local search that only accepts moves which do not make the
   score lexicographically worse.
@@ -193,6 +195,7 @@ class OptimizedPlanner:
             changed, unserved = greedy_insert_all(
                 world, self.travel, self.validator, working_vehicles, order,
                 deadline_monotonic=deadline, solver_log=self.solver_log, policy="a1", profile=profile,
+                keep_priority_order=profile == "urgent_first",
             )
 
             if profile == "minimum_disruption":
