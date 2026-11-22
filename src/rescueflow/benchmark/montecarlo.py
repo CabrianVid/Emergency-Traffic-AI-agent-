@@ -11,6 +11,10 @@ B1  stronger conventional baseline, added after the first 4,000 runs because the
     priority order, immediate re-dispatch when a unit becomes ready, no AI.
     Only B1 gets that extra trigger, and with no decision delay.
 
+R1Q, A1Q, A2Q  second generation of R1, A1 and A2: the waiting queue replaces the
+    nearest-unit option, and they decide again, without delay, when a unit becomes
+    ready for a waiting call (as B1 does). Everything else is unchanged.
+
 These are NOT the historical A1/A2/A3 of docs/EXPERIMENTS.md (old A2 was
 B0 + signals). Automatic execution of the AI's first choice exists only here.
 
@@ -44,20 +48,27 @@ from rescueflow.benchmark.inputs import digest, write_json
 from rescueflow.benchmark.runner import _trip_rows, percentile90
 from rescueflow.benchmark.scenarios import HORIZON_S, RESPONSE_CAP_S, RESPONSE_TARGET_S, prepare
 from rescueflow.decision.agent import SOURCE_AI, SOURCE_FALLBACK, DecisionAgent, fallback_key
-from rescueflow.decision.alternatives import generate_alternatives
+from rescueflow.decision.alternatives import OFFERED, RECORDED, generate_alternatives, planning_copy
 from rescueflow.dispatch.notification import MockDispatchNotificationAdapter
 from rescueflow.events.apply import apply_event
 from rescueflow.events.interpreter import RuleBasedEventInterpreter
 from rescueflow.events.types import EventDraft, ValidationError
 from rescueflow.models.core import EventType, TaskKind, TaskStatus, WorldState
 from rescueflow.planning.baseline import BaselinePlanner
-from rescueflow.planning.queue_dispatch import CentralQueuePlanner, ready_pairs, waiting_calls
+from rescueflow.planning.queue_dispatch import CentralQueuePlanner, FreeUnitTrigger, ready_pairs, waiting_calls
 from rescueflow.sumo.controller import TraciSimulationController
 from rescueflow.travel import SumoTravelTimeProvider
 
 POLICIES = ("B0", "A1", "A2")
-ALL_POLICIES = (*POLICIES, "R1", "B1")
+QUEUE_POLICIES = ("R1Q", "A1Q", "A2Q")
+AI_POLICIES = ("A1", "A2", "A1Q", "A2Q")
+SIGNAL_POLICIES = ("A2", "A2Q")
+ALL_POLICIES = (*POLICIES, "R1", "B1", *QUEUE_POLICIES)
 ROOT = Path("experiments/mc")
+# 1: the published runs of seeds 0-999. 2: all policies alike finish a service
+# before a new plan is installed, count a free unit's delay from its report, and
+# recover units that SUMO dropped or that stand in the wrong lane at their stop.
+ENGINE = 2
 BUNDLE = Path("experiments/published/montecarlo-2026-11-22")
 
 
@@ -66,19 +77,22 @@ class FallbackUsed(RuntimeError):
 
 
 class Run:
-    def __init__(self, folder: Path, output: Path, policy: str, agent: DecisionAgent | None, gui: bool = False) -> None:
+    def __init__(self, folder: Path, output: Path, policy: str, agent: DecisionAgent | None, gui: bool = False,
+                 engine: int | None = None) -> None:
         self.manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
         net = folder.parents[1] / "grid.net.xml"
         for name, expected in self.manifest["files"].items():
             if digest(net if name == net.name else folder / name) != expected:
                 raise ValueError(f"Input changed: {name}")
         self.policy, self.agent = policy, agent
+        self.engine = ENGINE if engine is None else engine
         self.world = WorldState.model_validate_json((folder / "world.json").read_bytes())
         self.travel = SumoTravelTimeProvider(str(net))
         self.controller = TraciSimulationController(
             str(folder / "run.sumocfg"), str(net), str(output / "unused.state.xml.gz"), self.manifest["seed"],
             allow_teleport=False, observations_dir=output, junction_stops=True, gui=gui)
         self.controller.defer_junction_reroutes = True
+        self.controller.finish_service_first = self.controller.recover_stuck_units = self.engine >= 2
         self.controller.green_wave.enabled = False
         self.events: list[dict] = []
         self.decisions: list[dict] = []
@@ -86,6 +100,7 @@ class Run:
         self.changed = 0
         self.on_step = None
         self._last_pairs: frozenset = frozenset()
+        self._trigger = FreeUnitTrigger()
 
     def log(self, kind: str, **fields) -> None:
         self.events.append({"kind": kind, "sim_time_s": self.world.sim_time_s, **fields})
@@ -115,6 +130,8 @@ class Run:
             self.controller.apply_road_closure_physically(world, edge)
         apply_event(world, validated)
         if kind == "vehicle_delay":
+            if self.engine >= 2:  # a free unit's delay counts from now
+                unit.available_after_s = max(unit.available_after_s, world.sim_time_s + event["payload"]["delay_s"])
             self.controller.hold_vehicle(world, unit.id, event["payload"]["delay_s"])
         if kind == "destination_changed":
             affected = [v.id for v in world.vehicles.values() if any(
@@ -130,17 +147,12 @@ class Run:
 
     # -- dispatch ------------------------------------------------------------
 
-    def choose(self):
+    def choose(self, freed: bool = False):
         world = self.world
         self.controller.use_live_traffic(self.travel)
         event = world.events[-1]
         if self.policy in ("B0", "B1"):
-            planning = world.model_copy(deep=True)
-            self.travel.set_closed_edges(world.closed_edges)
-            for vehicle in planning.vehicles.values():
-                edge = vehicle.sumo_edge_id
-                if edge and not edge.startswith(":"):
-                    vehicle.node_id = self.travel.net.getEdge(edge).getToNode().getID()
+            planning = planning_copy(world, self.travel, self.controller.serving(world))
             if self.policy == "B1":
                 plan = CentralQueuePlanner(self.travel).plan(planning, event)
                 return plan if plan.feasibility.feasible else None
@@ -151,12 +163,22 @@ class Run:
         def route_check(current, proposal):
             self.controller.preview_routes(current, {p.vehicle_id: p.stops for p in proposal.vehicle_plans})
 
-        options, notes = generate_alternatives(world, self.travel, event, budget_s=30.0, route_check=route_check)
+        queue = self.policy in QUEUE_POLICIES
+        event = None if queue and freed else event
+        options, notes = generate_alternatives(world, self.travel, event, budget_s=30.0, route_check=route_check,
+                                               strategies=OFFERED if queue else RECORDED,
+                                               serving=self.controller.serving(world))
         if not options:
             self.log("no_feasible_option", notes=notes[:5])
             return None
-        if self.policy == "R1":
-            return min(options, key=fallback_key).proposal
+        if self.policy in ("R1", "R1Q"):
+            best = min(options, key=fallback_key)
+            if queue:
+                self.log("options", chosen=best.strategy, freed=freed, options=[
+                    [o.strategy, o.metrics["mean_call_response_s"], o.metrics["call_response_s"],
+                     o.metrics["reassigned_task_ids"], o.metrics["waiting_call_ids"], o.metrics["unserved_task_ids"]]
+                    for o in options])
+            return best.proposal
         result = self.agent.rank(world, event, options)
         chosen = next(o for o in options if o.option_id == result.recommended)
         self.decisions.append({
@@ -169,9 +191,9 @@ class Run:
             raise FallbackUsed(result.error or "unknown")
         return chosen.proposal
 
-    def dispatch(self) -> None:
+    def dispatch(self, freed: bool = False) -> None:
         started = time.perf_counter()
-        plan = self.choose()
+        plan = self.choose(freed)
         elapsed = (time.perf_counter() - started) * 1000
         if plan is None:
             self.log("plan_infeasible", decision_ms=elapsed)
@@ -187,9 +209,11 @@ class Run:
         self.controller.preview_routes(candidate, {v: candidate.vehicles[v].route_stops for v in touched})
         self.controller.apply_committed_plan(candidate, touched)
         self.world = candidate
-        self.controller.green_wave.enabled = self.policy == "A2"
+        self._trigger.mark(candidate)
+        self.controller.green_wave.enabled = self.policy in SIGNAL_POLICIES
         self.changed += sum(bool(before.get(k)) and t.assigned_vehicle_id != before[k] for k, t in candidate.tasks.items())
-        self.log("plan_committed", units=touched, unserved=plan.unserved_task_ids, decision_ms=elapsed)
+        self.log("plan_committed", units=touched, unserved=plan.unserved_task_ids, decision_ms=elapsed,
+                 **({"freed": freed} if self.policy in QUEUE_POLICIES else {}))
 
     def _queue_can_move(self, delay: float) -> bool:
         """A call past its first decision is waiting and a unit became ready."""
@@ -222,6 +246,9 @@ class Run:
                 self.dispatch()
             elif self.policy == "B1" and self._queue_can_move(delay):
                 self.dispatch()
+            elif self.policy in QUEUE_POLICIES and self._trigger.fires(
+                    self.world, lambda t: self.reported.get(t.id, 0.0) + delay <= self.world.sim_time_s):
+                self.dispatch(freed=True)
             self.controller.step(self.world, capture_positions=False)
             if self.on_step is not None:
                 self.on_step(self)
@@ -267,10 +294,11 @@ class Run:
         sources = Counter(d["source"] for d in self.decisions)
         ranked = [d for d in self.decisions if d["source"] == SOURCE_AI]
         return {
-            "seed": self.manifest["seed"], "policy": self.policy, "density": self.manifest["density"],
+            "seed": self.manifest["seed"], "policy": self.policy, "engine": self.engine, "density": self.manifest["density"],
             "event_types": sorted({e["type"] for e in self.manifest["events"]}),
             "valid": not failures, "failures": failures, "calls": calls,
             "ambulance_collisions": sum(e["kind"] == "collision" and e["vehicle_id"] in self.world.vehicles for e in log),
+            "lane_change_forced": kinds["lane_change_forced"],
             "collisions": kinds["collision"], "missing_stops": kinds["missing_sumo_stop"],
             "insertion_errors": warnings.count("will not be able to depart"),
             "critical_unreached": sum(c["priority"] == "critical" and c["response_s"] is None for c in calls.values()),
@@ -303,8 +331,8 @@ def worker(root: Path, seed: int, policy: str) -> int:
     output.mkdir(parents=True, exist_ok=True)
     folder = prepare(root, seed)
     agent = None
-    if policy in ("A1", "A2"):
-        agent = DecisionAgent(cache_dir=root / "ai-cache", retries=4, timeout_s=30.0, max_calls=40)
+    if policy in AI_POLICIES:
+        agent = DecisionAgent(cache_dir=root / "ai-cache", retries=4, timeout_s=30.0, max_calls=80)
         if agent.client is None:
             raise SystemExit(f"AI unavailable: {agent.unavailable_reason}")
     run = Run(folder, output, policy, agent)
@@ -377,13 +405,13 @@ def replay(root: Path, seed: int, policy: str, *, gui: bool, delay_ms: int) -> i
     The AI is never called: a decision that was not recorded stops the replay.
     Afterwards the observed responses are compared with the recorded ones."""
     recorded = json.loads(recorded_metrics(root, seed, policy).read_text(encoding="utf-8"))
-    agent = DecisionAgent(cache_dir=root / "ai-cache", enabled=False) if policy in ("A1", "A2") else None
+    agent = DecisionAgent(cache_dir=root / "ai-cache", enabled=False) if policy in AI_POLICIES else None
     folder = prepare(root, seed)
     print(f"Scenario {seed} {policy}: {recorded['density']} traffic, events {', '.join(recorded['event_types'])}", flush=True)
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="rescueflow-replay-") as temporary:
         output = Path(temporary)
-        run = Run(folder, output, policy, agent, gui=gui)
+        run = Run(folder, output, policy, agent, gui=gui, engine=recorded.get("engine", 1))
         shown = {"events": 0, "log": 0}
 
         def narrate(current: Run) -> None:
@@ -521,7 +549,9 @@ def report(root: Path) -> dict:
             "ai_input_tokens": sum(get("ai_input_tokens")),
         }
     for reference, candidate in (("B0", "A1"), ("A1", "A2"), ("B0", "A2"), ("B0", "R1"), ("R1", "A1"),
-                                 ("B0", "B1"), ("B1", "A1"), ("B1", "A2"), ("B1", "R1")):
+                                 ("B0", "B1"), ("B1", "A1"), ("B1", "A2"), ("B1", "R1"),
+                                 ("B0", "A1Q"), ("B1", "R1Q"), ("B1", "A1Q"), ("B1", "A2Q"), ("R1Q", "A1Q"), ("A1Q", "A2Q"),
+                                 ("A1", "A1Q"), ("R1", "R1Q")):
         both = sorted(set(rows[reference]) & set(rows[candidate]))
         valid = [s for s in both if rows[reference][s]["valid"] and rows[candidate][s]["valid"]]
         if len(valid) < 2:
@@ -549,6 +579,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     go = sub.add_parser("run")
     go.add_argument("--scenarios", type=int, default=10)
+    go.add_argument("--first-seed", type=int, default=0)
     go.add_argument("--policies", default=",".join(POLICIES))
     go.add_argument("--jobs", type=int, default=8)
     one = sub.add_parser("worker")
@@ -573,7 +604,7 @@ def main() -> None:
         return
     if args.command == "run":
         args.root.mkdir(parents=True, exist_ok=True)
-        launch(args.root, range(args.scenarios), tuple(args.policies.split(",")), args.jobs)
+        launch(args.root, range(args.first_seed, args.first_seed + args.scenarios), tuple(args.policies.split(",")), args.jobs)
     print(json.dumps(report(args.root), indent=2))
 
 

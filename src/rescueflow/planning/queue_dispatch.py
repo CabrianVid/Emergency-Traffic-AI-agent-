@@ -14,6 +14,7 @@ Assignments already under way are not optimized or exchanged.
 
 from __future__ import annotations
 
+import math
 import time
 import uuid
 
@@ -56,6 +57,9 @@ def is_ready(world: WorldState, vehicle: Vehicle, task: Task) -> bool:
     open_tasks = {s.task_id for s in vehicle.route_stops if s.service_completed_at_s is None}
     if not open_tasks:
         return True
+    locked = vehicle.route_stops[: 0 if vehicle.locked_stop_index is None else vehicle.locked_stop_index + 1]
+    if any(s.service_completed_at_s is None for s in locked):
+        return False
     return task.priority == TaskPriority.critical and all(
         t in world.tasks
         and world.tasks[t].priority == TaskPriority.routine
@@ -72,6 +76,63 @@ def ready_pairs(world: WorldState) -> frozenset[tuple[str, str]]:
         for vehicle in world.vehicles.values()
         if is_ready(world, vehicle, task)
     )
+
+
+def queued_behind_work(world: WorldState) -> list[Task]:
+    """Planned calls whose unit must finish other work before starting them."""
+    queued = []
+    for vehicle in world.vehicles.values():
+        open_ids = list(dict.fromkeys(s.task_id for s in vehicle.route_stops if s.service_completed_at_s is None))
+        queued += [world.tasks[i] for i in open_ids[1:]
+                   if i in world.tasks and world.tasks[i].status == TaskStatus.planned and is_call(world.tasks[i])]
+    return queued
+
+
+class FreeUnitTrigger:
+    """Fires when a unit becomes ready for a call that waits or is queued behind other work."""
+
+    def __init__(self) -> None:
+        self._pairs: frozenset = frozenset()
+
+    def fires(self, world: WorldState, decided) -> bool:
+        """`decided(task)`: the call is past its first decision."""
+        before = self._pairs
+        self.mark(world)
+        calls = [*waiting_calls(world), *queued_behind_work(world)]
+        return any(decided(t) for t in calls) and bool(self._pairs - before)
+
+    def mark(self, world: WorldState) -> None:
+        """Remember the pairs available now, so a decision just taken on them is not repeated."""
+        self._pairs = frozenset((t.id, v.id) for t in (*waiting_calls(world), *queued_behind_work(world))
+                                for v in world.vehicles.values()
+                                if v.id != t.assigned_vehicle_id and is_ready(world, v, t))
+
+
+def estimated_waiting_etas(world: WorldState, travel: TravelTimeProvider, merged: dict, waiting: list[Task]) -> dict[str, float]:
+    """Absolute arrival estimate per waiting call: the first capable unit to
+    finish its planned work takes it, most urgent and oldest call first."""
+    free = {}
+    for vehicle_id, stops in merged.items():
+        vehicle = world.vehicles[vehicle_id]
+        last = next((s for s in reversed(stops) if s.service_completed_at_s is None), None)
+        free[vehicle_id] = ((last.node_id, last.departure_s or last.arrival_s or world.sim_time_s) if last
+                            else (vehicle.node_id, max(vehicle.available_after_s, world.sim_time_s)))
+    etas = {}
+    for task in sorted(waiting, key=lambda t: (_PRIORITY_RANK[t.priority], t.created_at_s)):
+        best = None
+        for vehicle_id, (node, at) in free.items():
+            if not is_vehicle_eligible(world, world.vehicles[vehicle_id], task):
+                continue
+            eta = max(at, world.sim_time_s) + travel.road_eta_s(node, task.pickup_node, at)
+            if math.isfinite(eta) and (best is None or eta < best[0]):
+                best = (eta, vehicle_id)
+        if best is None:
+            continue
+        etas[task.id] = best[0]
+        leave = best[0] + task.load_seconds
+        done = leave + travel.road_eta_s(task.pickup_node, task.dropoff_node, leave) + task.unload_seconds
+        free[best[1]] = (task.dropoff_node, done)
+    return etas
 
 
 class CentralQueuePlanner:

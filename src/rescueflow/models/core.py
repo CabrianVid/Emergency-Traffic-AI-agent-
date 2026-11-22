@@ -155,6 +155,9 @@ class Vehicle(_Base):
     from `node_id`, which is the nearest/last *discrete* node and is what
     planning operates on. See docs/CONTRACTS.md "Real position vs
     planning node"."""
+    at_node_s: float | None = Field(default=None, exclude=True)
+    """Set on detached planning copies only: when the unit reaches `node_id`.
+    New work starts there, not at the last completed stop it has since left."""
 
     def patient_load(self) -> int:
         if self.locked_stop_index is None or not self.route_stops:

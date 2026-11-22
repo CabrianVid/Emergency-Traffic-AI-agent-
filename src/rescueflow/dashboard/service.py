@@ -19,6 +19,7 @@ from rescueflow.dispatch.notification import MockDispatchNotificationAdapter
 from rescueflow.events.apply import apply_event
 from rescueflow.events.types import EventDraft, ValidationError
 from rescueflow.models.core import EventType, TaskPriority, TaskStatus
+from rescueflow.planning.queue_dispatch import FreeUnitTrigger, queued_behind_work, waiting_calls
 from rescueflow.scenario.loader import DefaultScenarioLoader, build_initial_world
 from rescueflow.sumo.controller import TraciSimulationController
 from rescueflow.travel import SumoTravelTimeProvider
@@ -52,6 +53,8 @@ class DispatchRun:
         self.speed = 1
         self.playing = False
         self.error = None
+        self._queued: set[str] = set()
+        self._trigger = FreeUnitTrigger()
         self.run_id = ""
         self.sequence = 0
         self.state: dict = {"sequence": 0, "simulator": "starting", "agent_mode": agent.label,
@@ -64,6 +67,7 @@ class DispatchRun:
         self.network, self.scenario = network, scenario
         self.run_id = uuid4().hex
         self.speed = 1
+        self._queued, self._trigger = set(), FreeUnitTrigger()
         self.playing = False
         self.demo_pause = False
         self.error = None
@@ -100,6 +104,7 @@ class DispatchRun:
             # installed on the next road edge.
             self.controller.defer_junction_reroutes = True
             self.controller.detour_civilians = True
+            self.controller.finish_service_first = self.controller.recover_stuck_units = True
             self.controller.green_wave.enabled = False
             self.controller.load_scenario(world, keep_connected=True)
             self.controller.step(world, n=129 if network == "ljubljana" else 150)
@@ -145,6 +150,9 @@ class DispatchRun:
         world = self.require_world()
         try:
             self.controller.step(world, n=steps or self.speed)
+            if not self._proposals and self._trigger.fires(world, lambda task: task.id in self._queued):
+                self._record(kind="unit_available", message="A unit became free for a waiting call: options recalculated")
+                return self.propose(freed=True)
             return self.publish()
         except Exception as exc:
             self.playing = False
@@ -219,6 +227,8 @@ class DispatchRun:
                 self.controller.apply_road_closure_physically(world, payload["edge_id"])
             apply_event(world, event)
             if event.event.type == EventType.vehicle_delay:
+                unit = world.vehicles[payload["vehicle_id"]]
+                unit.available_after_s = max(unit.available_after_s, world.sim_time_s + float(payload["delay_s"]))
                 self.controller.hold_vehicle(world, payload["vehicle_id"], float(payload["delay_s"]))
             if event.event.type == EventType.destination_changed:
                 # A changed destination is an instruction, not a dispatch
@@ -297,19 +307,20 @@ class DispatchRun:
             "priority": "critical", "latest_pickup_s": now + 240, "latest_delivery_s": now + 950,
         })]
 
-    def propose(self) -> dict:
+    def propose(self, freed: bool = False) -> dict:
         """Recalculate feasible alternatives and ask the decision agent to rank them."""
         world = self.require_world()
         self.playing = False
         self.demo_pause = True
-        event = world.events[-1] if world.events else None
+        event = world.events[-1] if world.events and not freed else None
         # Plan with the travel times SUMO observes now, as the benchmark does.
         self.controller.use_live_traffic(self.travel)
 
         def route_check(current, proposal):
             self.controller.preview_routes(current, {p.vehicle_id: p.stops for p in proposal.vehicle_plans})
 
-        options, notes = generate_alternatives(world, self.travel, event, route_check=route_check)
+        options, notes = generate_alternatives(world, self.travel, event, route_check=route_check,
+                                               serving=self.controller.serving(world))
         recommendation = self.decision.rank(world, event, options)
         rank = {option_id: index for index, option_id in enumerate(recommendation.ranking)}
         options.sort(key=lambda o: rank.get(o.option_id, 99))
@@ -396,6 +407,9 @@ class DispatchRun:
         if self._before is None:
             self._before = self._schedule()
         self.world = next_world
+        # Calls this decision leaves waiting are offered again when a unit frees up.
+        self._queued = {t.id for t in [*waiting_calls(next_world), *queued_behind_work(next_world)]}
+        self._trigger.mark(next_world)
         self._policy = candidate.policy
         option = self._options.get(proposal_id)
         authorised = bool(signal_priority and option and option.signal_priority_units)

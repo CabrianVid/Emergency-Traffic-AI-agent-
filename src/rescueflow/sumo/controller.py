@@ -73,6 +73,7 @@ class TraciSimulationController:
         self._stop_queue: dict[str, list[dict]] = {}
         self._next_stop_ptr: dict[str, int] = {}
         self._was_stopped: dict[str, bool] = {}
+        self._service_began: dict[str, float] = {}
         self._civilian_loss_s: dict[str, float] = {}
         self._gui_markers: dict[str, dict] = {}
         self._spawn_origin: dict[str, tuple[str | None, dict]] = {}
@@ -81,6 +82,14 @@ class TraciSimulationController:
         # junction and install its route as soon as it reaches a road edge.
         self.defer_junction_reroutes = False
         self._deferred_reroutes: set[str] = set()
+        # Opt-in: a new plan for a unit standing at a stop is installed after
+        # that stop. Otherwise loading or unloading starts over.
+        self.finish_service_first = False
+        # Opt-in: recover a unit that SUMO dropped on re-insertion, or that a
+        # queue keeps out of its stop lane at the scene.
+        self.recover_stuck_units = False
+        self._waiting_at_stop: dict[str, float] = {}
+        self._after_service: set[str] = set()
         # Opt-in (dashboard): civilians drive around a road that closes live.
         # Without it SUMO aborts when a planned trip departs across it. The
         # benchmark instead plans civilian routes around its closures.
@@ -228,6 +237,8 @@ class TraciSimulationController:
         self._spawn_origin.clear()
         self._awaiting_insertion.clear()
         self._deferred_reroutes.clear()
+        self._after_service.clear()
+        self._waiting_at_stop.clear()
         self._holds.clear()
         self._added_at.clear()
 
@@ -440,17 +451,56 @@ class TraciSimulationController:
         pending = set(traci.simulation.getPendingVehicles())
         for vehicle_id, (route_id, type_id, kwargs, placements) in list(self._awaiting_insertion.items()):
             del self._awaiting_insertion[vehicle_id]
-            if vehicle_id not in pending:
+            dropped = self.recover_stuck_units and vehicle_id not in pending and vehicle_id not in traci.vehicle.getIDList()
+            if vehicle_id not in pending and not dropped:
                 continue
-            traci.vehicle.remove(vehicle_id)
-            relaxed = {**kwargs, "departSpeed": "max"}
+            if dropped:
+                # SUMO rejected the insertion outright (for example it could not
+                # stop for a signal at that speed). Start again from standstill.
+                relaxed = {**kwargs, "departSpeed": "0"}
+                if kwargs["departSpeed"] == "0":
+                    relaxed["departPos"] = "base"
+            else:
+                traci.vehicle.remove(vehicle_id)
+                relaxed = {**kwargs, "departSpeed": "max"}
+            if self.recover_stuck_units and not (dropped and kwargs["departSpeed"] == "0"):
+                self._awaiting_insertion[vehicle_id] = (route_id, type_id, relaxed, placements)
             self._insert_vehicle(vehicle_id, route_id, type_id, relaxed, placements)
             self._added_at[vehicle_id] = traci.simulation.getTime()
             self._spawn_origin[vehicle_id] = (self._spawn_origin.get(vehicle_id, (None, {}))[0], relaxed)
+            if kwargs["departSpeed"] == "max":
+                continue  # still waiting for the same gap; logged already
             self.event_log.append({
                 "sim_time_s": world.sim_time_s, "kind": "reinsertion_speed_relaxed", "vehicle_id": vehicle_id,
                 "requested_mps": kwargs["departSpeed"],
             })
+
+    def _force_lane_change(self, world: WorldState, traci) -> None:
+        """A unit standing beside its stop for 10 s in another lane (a queue
+        blocked the lane change, possibly forever) is re-inserted in its own lane."""
+        live = set(traci.vehicle.getIDList())
+        for vehicle_id, queue in list(self._stop_queue.items()):
+            stops = traci.vehicle.getStops(vehicle_id, 1) if vehicle_id in live else ()
+            if (not stops or self._next_stop_ptr.get(vehicle_id, 0) >= len(queue) or vehicle_id in self._holds
+                    or world.vehicles[vehicle_id].status == VehicleStatus.broken or traci.vehicle.isStopped(vehicle_id)
+                    or traci.vehicle.getSpeed(vehicle_id) > 0.1):
+                self._waiting_at_stop.pop(vehicle_id, None)
+                continue
+            lane, edge = traci.vehicle.getLaneID(vehicle_id), traci.vehicle.getRoadID(vehicle_id)
+            position = traci.vehicle.getLanePosition(vehicle_id)
+            if (lane == stops[0].lane or edge != stops[0].lane.rsplit("_", 1)[0] or position < stops[0].endPos - 5):
+                self._waiting_at_stop.pop(vehicle_id, None)
+                continue
+            since = self._waiting_at_stop.setdefault(vehicle_id, world.sim_time_s)
+            if world.sim_time_s - since < 10:
+                continue
+            del self._waiting_at_stop[vehicle_id]
+            remaining = [s for s in world.vehicles[vehicle_id].route_stops if s.service_completed_at_s is None]
+            if not remaining:
+                continue
+            self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "lane_change_forced",
+                                   "vehicle_id": vehicle_id, "lane": lane, "planned_lane": stops[0].lane})
+            self._establish_route(world, world.vehicles[vehicle_id], remaining)
 
     def _stop_placements(self, edges: list[str], stop_plan: list[dict]) -> list[tuple]:
         """(lane, position, entry) for every planned stop, in route order."""
@@ -555,8 +605,11 @@ class TraciSimulationController:
                 self._deferred_reroutes.add(vehicle_id)
                 self.event_log.append({"sim_time_s": world.sim_time_s, "kind": "reroute_deferred_in_junction",
                                        "vehicle_id": vehicle_id, "edge_id": vehicle.sumo_edge_id})
+            elif remaining and self._still_serving(world, vehicle_id, remaining[0]):
+                self._after_service.add(vehicle_id)
             elif remaining:
                 self._deferred_reroutes.discard(vehicle_id)
+                self._after_service.discard(vehicle_id)
                 self._establish_route(world, vehicle, remaining)
                 any_established = True
             else:
@@ -567,6 +620,45 @@ class TraciSimulationController:
             self.step(world, n=1)
         if standalone:
             self.save_and_close()
+
+    def serving(self, world: WorldState) -> dict[str, float]:
+        """Units standing at a stop now, with the expected end of that service."""
+        if not self.finish_service_first:
+            return {}
+        found = {}
+        for vehicle_id, stopped in self._was_stopped.items():
+            vehicle = world.vehicles[vehicle_id]
+            queue, index = self._stop_queue.get(vehicle_id, []), self._next_stop_ptr.get(vehicle_id, 0)
+            if not stopped or index >= len(queue) or vehicle.status == VehicleStatus.broken:
+                continue
+            stop = next((s for s in vehicle.route_stops if s.stop_id == queue[index]["stop_id"]), None)
+            if stop is not None and stop.service_completed_at_s is None:
+                found[vehicle_id] = self._service_began[vehicle_id] + self._dwell_seconds(world, stop)
+        return found
+
+    def _still_serving(self, world: WorldState, vehicle_id: str, first) -> bool:
+        if vehicle_id not in self.serving(world):
+            return False
+        entry = self._stop_queue[vehicle_id][self._next_stop_ptr[vehicle_id]]
+        # A task sent elsewhere meanwhile (destination change) must leave now.
+        here = world.vehicles[vehicle_id].sumo_edge_id
+        return entry["stop_id"] == first.stop_id and here is not None and (
+            self._edge_to_node(here) == first.node_id or first.kind == StopKind.pickup)
+
+    def _install_after_service(self, world: WorldState, traci) -> None:
+        for vehicle_id in sorted(self._after_service):
+            vehicle = world.vehicles[vehicle_id]
+            remaining = [s for s in vehicle.route_stops if s.service_completed_at_s is None]
+            if vehicle.status != VehicleStatus.broken and remaining and self._still_serving(world, vehicle_id, remaining[0]):
+                continue
+            self._after_service.discard(vehicle_id)
+            if not remaining or vehicle.status == VehicleStatus.broken:
+                continue
+            live = vehicle_id in traci.vehicle.getIDList()
+            if live and self._must_leave_edge_first(world, traci.vehicle.getRoadID(vehicle_id)):
+                self._deferred_reroutes.add(vehicle_id)
+            else:
+                self._establish_route(world, vehicle, remaining)
 
     def edge_travel_times(self) -> dict[str, float]:
         """Current mean travel time of every road edge, as SUMO observes it."""
@@ -776,6 +868,9 @@ class TraciSimulationController:
             # After the arrival check: replacing a unit must not look like an arrival.
             self._retry_blocked_insertions(world, traci)
             self._apply_deferred_reroutes(world, traci)
+            self._install_after_service(world, traci)
+            if self.recover_stuck_units:
+                self._force_lane_change(world, traci)
             self._update_positions(world, traci)
             self._run_green_wave(world, traci)
             for restored in tick_scheduled_restorations(world):
@@ -895,6 +990,7 @@ class TraciSimulationController:
                 stop = next((s for s in world.vehicles[vehicle_id].route_stops if s.stop_id == queue[ptr]["stop_id"]), None)
                 if stop is not None:
                     stop.service_start_s = world.sim_time_s
+                self._service_began[vehicle_id] = world.sim_time_s
                 self.event_log.append({
                     "sim_time_s": world.sim_time_s, "kind": "stop_begin", "vehicle_id": vehicle_id, **queue[ptr],
                     "node_id": stop.node_id if stop is not None else None,

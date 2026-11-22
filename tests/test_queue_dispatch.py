@@ -1,9 +1,10 @@
 """B1 central-queue baseline, and calls that were unserved at first."""
 
 from rescueflow.approval.service import DefaultApprovalService
-from rescueflow.decision.alternatives import generate_alternatives
+from rescueflow.decision.alternatives import generate_alternatives, measure, planning_copy
 from rescueflow.models.core import Stop, StopKind, Task, TaskKind, TaskPriority, TaskStatus, Vehicle, VehicleMode, WorldState
-from rescueflow.planning.queue_dispatch import CentralQueuePlanner, ready_pairs, waiting_calls
+from rescueflow.planning.insertion import refresh_schedules
+from rescueflow.planning.queue_dispatch import CentralQueuePlanner, FreeUnitTrigger, ready_pairs, waiting_calls
 from test_planners import FakeTravelTimeProvider
 
 
@@ -67,3 +68,51 @@ def test_recalculating_reconsiders_a_call_that_was_unserved():
     assert options and options[0].proposal.vehicle_plans[0].stops[0].task_id == "C"
     DefaultApprovalService().approve(world, options[0].proposal, "test", "k")
     assert world.tasks["C"].status == TaskStatus.planned
+
+
+def _travel():
+    travel = FakeTravelTimeProvider()
+    travel.set_closed_edges = lambda closed: None
+    return travel
+
+
+def test_waiting_call_gets_an_estimated_response_so_waiting_never_looks_free():
+    world = WorldState(vehicles={"R1": _unit("R1", "0,0")}, tasks={"C1": _call("C1", "10,0"), "C2": _call("C2", "20,0")})
+    plan = CentralQueuePlanner(_travel()).plan(world, None)
+    metrics = measure(world, plan, _travel())
+    assert metrics["waiting_call_ids"] == ["C2"] and metrics["unserved_task_ids"] == []
+    assert metrics["call_response_s"]["C2"] > metrics["call_response_s"]["C1"] > 0
+    assert metrics["worst_critical_response_eta_s"] == metrics["critical_response_eta_s"]["C2"]
+
+
+def test_free_unit_trigger_fires_once_per_newly_ready_unit():
+    world = WorldState(vehicles={"R1": _unit("R1", "0,0")}, tasks={"C1": _call("C1", "10,0"), "C2": _call("C2", "20,0")})
+    trigger = FreeUnitTrigger()
+    DefaultApprovalService().approve(world, CentralQueuePlanner(_travel()).plan(world, None), "test", "k")
+    trigger.mark(world)
+    assert not trigger.fires(world, lambda t: True)
+    for stop in world.vehicles["R1"].route_stops:
+        stop.service_completed_at_s = 1.0
+    assert trigger.fires(world, lambda t: True) and not trigger.fires(world, lambda t: True)
+
+
+def test_unit_at_a_stop_keeps_its_task_and_schedules_start_from_now():
+    world = _world_with_transport(TaskStatus.planned)
+    world.sim_time_s = 600.0
+    world.tasks["C"] = _call("C", "10,0")
+    planning = planning_copy(world, _travel(), {"R1": 640.0})
+    refresh_schedules(planning, _travel(), {"R1": 640.0})
+    stops = planning.vehicles["R1"].route_stops
+    assert stops[0].departure_s == 640.0 and stops[1].arrival_s > 640.0
+    assert world.vehicles["R1"].route_stops[0].departure_s == 50.0, "the committed plan is untouched"
+    assert CentralQueuePlanner(_travel()).plan(planning, None).vehicle_plans == []
+
+
+def test_offered_options_include_the_queue_and_leave_unchanged_units_alone():
+    world = WorldState(vehicles={"R1": _unit("R1", "0,0"), "R2": _unit("R2", "900,0")},
+                       tasks={"C1": _call("C1", "10,0"), "H": _call("H", "890,0", TaskPriority.high)})
+    options, _ = generate_alternatives(world, _travel())
+    DefaultApprovalService().approve(world, options[0].proposal, "test", "k")
+    world.sim_time_s = 5.0
+    again, _ = generate_alternatives(world, _travel())
+    assert [p for o in again if o.strategy == "waiting_queue" for p in o.proposal.vehicle_plans] == []

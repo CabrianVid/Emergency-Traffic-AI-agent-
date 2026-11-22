@@ -165,3 +165,16 @@ def test_benchmark_mode_executes_the_ai_choice_and_reports_observed_times(tmp_pa
                     and e.get("task_id") == task_id and e["stop_kind"] == "pickup"]
         assert call["response_s"] == (arrivals[0] - reported[task_id] if arrivals else None)
     json.dumps(metrics)
+
+
+def test_freed_unit_makes_the_dashboard_offer_options_again(client):
+    plan = approve(client, post(client, "/api/plans/propose"))
+    runtime = client.app.state.runtime
+    runtime._queued = {"T1"}
+    runtime._trigger = SimpleNamespace(fires=lambda world, decided: decided(SimpleNamespace(id="T1")), mark=lambda world: None)
+    state = step(client, 1)
+    assert state["proposals"] and state["demo_pause"], "the dispatcher decides; nothing is committed"
+    assert state["world"]["tasks"]["T1"]["assigned_vehicle_id"] == plan["metrics"]["assignments"]["T1"]
+    runtime._trigger.fires = lambda world, decided: False
+    post(client, "/api/plans/reject")
+    assert step(client, 1)["proposals"] == []

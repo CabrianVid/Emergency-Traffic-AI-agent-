@@ -36,4 +36,4 @@ experiments/*.csv
 Thumbs.db
 .DS_Store
 experiments/mc/
-experiments/mc-pilot-100/
+experiments/mc-*/

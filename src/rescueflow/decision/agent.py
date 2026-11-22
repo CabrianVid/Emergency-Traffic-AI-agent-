@@ -42,6 +42,26 @@ INSTRUCTIONS = (
 )
 
 
+QUEUE_PROMPT_VERSION = "rescueflow-decision-v2"
+QUEUE_INSTRUCTIONS = (
+    "You are the recommendation engine of an ambulance dispatch centre (synthetic simulation). "
+    "Each option is a feasible plan produced by a deterministic planner; all times are its "
+    "calculated estimates in seconds. Choose the option a careful dispatcher should approve. "
+    "First leave no critical patient unserved. Then reach patients sooner: compare "
+    "mean_call_response_s, weighing critical calls most. Calls marked as waiting are sent to the first "
+    "capable unit that frees up, and their estimated response already includes that wait. A null event "
+    "means a unit just became available. Then avoid late high-priority work, then prefer fewer changes to "
+    "existing assignments. Equipment that another task depends on must still be delivered. Use only the "
+    "numbers given."
+)
+
+
+
+
+def _has_queue(options: list[Alternative]) -> bool:
+    return "waiting_call_ids" in options[0].metrics
+
+
 @dataclass
 class Recommendation:
     source: str
@@ -73,6 +93,12 @@ def fallback_key(option: Alternative) -> tuple:
     """Deterministic ranking: unserved critical, worst critical ETA, lateness, churn."""
     m = option.metrics
     worst = m["worst_critical_response_eta_s"]
+    if "waiting_call_ids" in m:
+        return (
+            m["unserved_critical"], len(m["unserved_task_ids"]),
+            m["mean_call_response_s"] or 0.0,
+            m["critical_tardiness_s"], m["other_weighted_lateness_s"], len(m["reassigned_task_ids"]), option.option_id,
+        )
     return (
         m["unserved_critical"], len(m["unserved_task_ids"]), worst if worst is not None else 0.0,
         m["critical_tardiness_s"], m["other_weighted_lateness_s"], len(m["reassigned_task_ids"]),
@@ -80,13 +106,14 @@ def fallback_key(option: Alternative) -> tuple:
     )
 
 
-def situation(world: WorldState, event: Event | None) -> dict:
+def situation(world: WorldState, event: Event | None, *, queue: bool = False) -> dict:
+    closed = (TaskStatus.completed, TaskStatus.interrupted) + (() if queue else (TaskStatus.unserved,))
     open_tasks = [
         {"id": t.id, "kind": t.kind.value, "priority": t.priority.value, "status": t.status.value,
          "assigned_unit": t.assigned_vehicle_id, "needs": t.required_capabilities,
          "equipment": t.required_asset_ids}
         for t in world.tasks.values()
-        if t.status not in (TaskStatus.completed, TaskStatus.interrupted, TaskStatus.unserved)
+        if t.status not in closed
     ]
     fleet = [
         {"id": v.id, "status": v.status.value, "capabilities": v.capabilities,
@@ -109,6 +136,10 @@ def _choice_description(option: Alternative) -> str:
     parts.append(f"unserved {len(m['unserved_task_ids'])} (critical {m['unserved_critical']})")
     parts.append(f"estimated late {len(m['estimated_deadline_misses'])}")
     parts.append(f"reassigned {len(m['reassigned_task_ids'])}")
+    if m.get("mean_call_response_s") is not None:
+        parts.insert(1, f"mean call response {m['mean_call_response_s']:.0f}s")
+    if m.get("waiting_call_ids"):
+        parts.append(f"waiting {len(m['waiting_call_ids'])}")
     return "; ".join(parts)[:500]
 
 
@@ -172,12 +203,14 @@ class DecisionAgent:
         return f"OpenAI Decisions · {self.model}" if self.client else f"Deterministic fallback · {self.unavailable_reason}"
 
     def request(self, world: WorldState, event: Event | None, options: list[Alternative]) -> dict:
+        queue = _has_queue(options)
         return {
             "model": self.model,
             "input": [
-                {"role": "developer", "content": INSTRUCTIONS},
+                {"role": "developer", "content": QUEUE_INSTRUCTIONS if queue else INSTRUCTIONS},
                 {"role": "user", "content": [{"type": "input_json", "data": {
-                    "prompt_version": PROMPT_VERSION, "situation": situation(world, event),
+                    "prompt_version": QUEUE_PROMPT_VERSION if queue else PROMPT_VERSION,
+                    "situation": situation(world, event, queue=queue),
                     "options": [o.summary() for o in options],
                 }}]},
             ],

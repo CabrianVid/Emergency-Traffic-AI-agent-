@@ -73,8 +73,10 @@ def _node_and_time_before(vehicle: Vehicle, prefix_and_unlocked: list[Stop], ind
     into `prefix_and_unlocked` (the full stop list including the locked
     prefix, so index is an absolute position)."""
     if index == 0:
-        return vehicle.node_id, vehicle.available_after_s
+        return vehicle.node_id, max(vehicle.at_node_s or 0.0, vehicle.available_after_s)
     prev = prefix_and_unlocked[index - 1]
+    if vehicle.at_node_s is not None and prev.service_completed_at_s is not None:
+        return vehicle.node_id, max(vehicle.at_node_s, vehicle.available_after_s)
     return prev.node_id, prev.departure_s if prev.departure_s is not None else vehicle.available_after_s
 
 
@@ -83,6 +85,47 @@ def _hospital_handling_s(world: WorldState, node_id: str) -> float:
         if site.node_id == node_id:
             return site.service_handling_s
     return 0.0
+
+
+def refresh_schedules(planning: WorldState, travel: TravelTimeProvider, serving: dict[str, float]) -> None:
+    """Re-estimate every unit's open stops from where it is now (planning copy
+    only). Committed times go stale as units run late, which makes queueing
+    behind a busy unit look faster than it is. `serving`: unit -> expected end
+    of the stop it stands at."""
+    net = getattr(travel, "net", None)
+    for vehicle in planning.vehicles.values():
+        vehicle.at_node_s = planning.sim_time_s
+        first = next((i for i, s in enumerate(vehicle.route_stops) if s.service_completed_at_s is None), None)
+        if vehicle.status == VehicleStatus.broken:
+            continue
+        edge = vehicle.sumo_edge_id
+        if net is not None and edge and not edge.startswith(":") and vehicle.id not in serving:
+            rest = net.getEdge(edge)
+            left = max(0.0, rest.getLength() - (vehicle.sumo_lane_position or 0.0)) / rest.getSpeed()
+            vehicle.at_node_s += left
+        if first is None:
+            continue
+        stops = [s.model_copy() for s in vehicle.route_stops]
+        try:
+            if vehicle.id in serving:
+                stops[first].arrival_s = stops[first].service_start_s = planning.sim_time_s
+                stops[first].departure_s = max(serving[vehicle.id], planning.sim_time_s)
+                recompute_tail(planning, travel, vehicle, stops, first + 1)
+            else:
+                recompute_tail(planning, travel, vehicle, stops, first)
+        except ValueError:
+            continue  # no open road now; keep the committed estimate
+        vehicle.route_stops = stops
+
+
+def lock_serving(planning: WorldState, serving: dict[str, float]) -> None:
+    """A unit standing at a stop finishes that task: no repair may take it."""
+    for vehicle_id in serving:
+        vehicle = planning.vehicles[vehicle_id]
+        current = next((s.task_id for s in vehicle.route_stops if s.service_completed_at_s is None), None)
+        last = max((i for i, s in enumerate(vehicle.route_stops) if s.task_id == current), default=None)
+        if current is not None and last is not None:
+            vehicle.locked_stop_index = max(vehicle.locked_stop_index or 0, last)
 
 
 @dataclass

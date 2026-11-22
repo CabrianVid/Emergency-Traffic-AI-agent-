@@ -90,6 +90,7 @@ export const scenarioLabels: Record<Scenario, string> = {
 }
 export const strategyLabels: Record<string, string> = {
   urgent_first: 'Urgent first', minimum_disruption: 'Least disruption', nearest_free_unit: 'Nearest free unit',
+  waiting_queue: 'Waiting queue',
 }
 export const sourceLabels: Record<string, string> = {
   'openai-decisions': 'Ranked by AI', 'single-feasible-option': 'Only feasible option',
