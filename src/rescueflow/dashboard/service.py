@@ -275,7 +275,8 @@ class DispatchRun:
             return EventDraft(type=EventType.destination_changed, sim_time_s=now, task_id=task.id,
                               payload={"new_dropoff_node": other, "reason": "receiving hospital changed"})
         if kind == "new_emergency":
-            spots = ("E2", "C4", "F3", "B5")
+            # Every spot must exist on both maps.
+            spots = ("E2", "C4", "D3", "D2")
             pickup = node(spots[(self._event_seq - 1) % len(spots)])
             return EventDraft(type=EventType.new_urgent_task, sim_time_s=now, payload={
                 "task_id": f"CALL-{self._event_seq}", "pickup_node": pickup, "dropoff_node": hospitals[0].node_id,
@@ -461,6 +462,22 @@ class DispatchRun:
             "comparison": comparison.copy(),
         }
 
+    def _recent_activity(self) -> list[dict]:
+        """Recent events. Frequent signal events must not push decisions out of the shift log."""
+        signals = sum("tls_id" in event for event in self._events)
+        others = len(self._events) - signals
+        kept = []
+        for event in self._events:
+            if "tls_id" in event:
+                if signals <= 60:
+                    kept.append(event)
+                signals -= 1
+            else:
+                if others <= 200:
+                    kept.append(event)
+                others -= 1
+        return kept
+
     def publish(self) -> dict:
         self.sequence += 1
         telemetry = {}
@@ -492,6 +509,6 @@ class DispatchRun:
             "telemetry": telemetry, "proposals": self._proposals, "proposal_issues": self._issues,
             "recommendation": self._recommendation, "decision_mode": self.decision.label,
             "signal_priority_active": bool(self.controller and self.controller.green_wave.enabled),
-            "before": self._before, "activity": self._events[-100:], "metrics": self._metrics(telemetry),
+            "before": self._before, "activity": self._recent_activity(), "metrics": self._metrics(telemetry),
         }
         return self.state

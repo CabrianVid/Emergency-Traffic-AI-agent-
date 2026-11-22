@@ -143,3 +143,18 @@ def test_structured_events_recommendation_reject_and_signal_priority(tmp_path, m
             state = event("destination_change", carrying)
             assert state["world"]["tasks"][carrying]["dropoff_node"] != before
         assert client.post("/api/events", json={"trigger": "event", "kind": "breakdown", "ref": "R99"}).status_code == 422
+
+
+def test_every_emergency_spot_exists_in_ljubljana(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    (tmp_path / "scenario").mkdir()
+    copyfile(
+        Path(__file__).resolve().parents[1] / "simulation" / "scenario" / "ljubljana-roads.osm.gz",
+        tmp_path / "scenario" / "ljubljana-roads.osm.gz",
+    )
+    with TestClient(create_app(tmp_path, "ljubljana")) as client:
+        for number in range(1, 5):
+            response = client.post("/api/events", json={"trigger": "event", "kind": "new_emergency", "ref": None})
+            assert response.status_code == 200, response.text
+            assert f"CALL-{number}" in response.json()["world"]["tasks"]
+            assert response.json()["proposals"], "a unit can reach it"
