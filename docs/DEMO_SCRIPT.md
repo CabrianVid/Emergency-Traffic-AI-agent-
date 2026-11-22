@@ -9,7 +9,8 @@ markers come from TraCI.
 
 1. **Start state.** The AI co-dispatcher already suggests who should take the
    unassigned work. Point out the orange marks, then press `Enter`.
-2. **Emergency call.** Press `F2`. The call appears as "Needs a unit" and the
+2. **Emergency call.** Press `N`, type a street or click the map, add what
+   happened and log it (`F2` sends a prepared call instead). The call appears as "Needs a unit" and the
    AI compares plans. The panel says whether the AI ranked them, only one plan
    exists, or fixed rules ranked them because the AI is unavailable.
 3. **Decide together.** Press `2` and `1` to view options on the map and

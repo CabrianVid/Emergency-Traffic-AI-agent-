@@ -302,6 +302,19 @@ tasks, ignoring generated proposal and stop IDs.
   `simulation/presentation` (CC BY 4.0, attributed on the map).
 - Activity keeps the last 200 events plus 60 signal events, so signals cannot push
   decisions out of the shift log.
-- The map shows about 30% more area. `frontend/src/outerRoads.json` adds 775 street
-  segments from the bundled wide OSM extract (ODbL) as display only: units cannot use
-  them and they cannot be closed. The simulated network is unchanged.
+
+# City-wide dashboard and logged calls (2026-11-22)
+
+- **The dashboard now simulates 5.2 x 4 km of Ljubljana** from the bundled wide OSM
+  extract, with the settings of the city-wide SUMO scene. This replaces the Tabor-UKC
+  area and the display-only streets. Scenario nodes are real places, so distances and
+  demo timing changed; task deadlines did not. The Ljubljana test uses the new extract.
+- **`CityTravelTimeProvider`** searches once per origin. Costs equal the reference
+  provider (`tests/test_city_travel.py`); ties may differ, so the benchmark keeps the
+  reference provider.
+- **A logged call** snaps to the nearest junction with two-way access to UKC. Target
+  times to the patient (8, 15, 30 min) are synthetic. Its note goes to the AI with the event.
+- **A breakdown report waits out a junction** (up to 30 s) instead of failing.
+- **`urgent_first` sends critical calls to the unit that arrives first** in the offered
+  options; recorded R1/A1/A2 runs keep cheapest insertion and still replay.
+- Civilian traffic is drawn as dots (telemetry `traffic`) and can be turned off.

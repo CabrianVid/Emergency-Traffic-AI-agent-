@@ -4,9 +4,11 @@ import { api, useSnapshot } from './connection'
 import { Agent } from './Agent'
 import { CallQueue, Inspector, Log, Timeline, UnitBoard } from './Boards'
 import { CityMap } from './CityMap'
+import { NewCall } from './NewCall'
+import type { CallDraft } from './NewCall'
 import { Evaluation, SessionPanel } from './Session'
 import { buildPlaces, isStale, needsUnit, openTasks, planActions, setAnchor, timeOfDay, unitState } from './model'
-import type { Geometry, Interpretation, Network, Scenario, Snapshot } from './model'
+import type { Geometry, Interpretation, Network, Point, Scenario, Snapshot } from './model'
 import './style.css'
 
 function useStored<T>(key: string, initial: T): [T, (value: T) => void] {
@@ -50,6 +52,10 @@ function App() {
   const [dock, setDock] = useStored<'timeline' | 'log'>('dock', 'timeline')
   const [night, setNight] = useStored('night', false)
   const [satellite, setSatellite] = useStored('satellite', false)
+  const [traffic, setTraffic] = useStored('traffic', true)
+  const [logging, setLogging] = useState(false)
+  const [draft, setDraft] = useState<Point | null>(null)
+  const [focus, setFocus] = useState<{ at: Point; key: number } | null>(null)
   const [leftWidth, setLeftWidth] = useStored('left', 376)
   const [rightWidth, setRightWidth] = useStored('right', 432)
   const [dockHeight, setDockHeight] = useStored('dock-height', 262)
@@ -66,7 +72,7 @@ function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = night ? 'night' : 'day' }, [night])
   useEffect(() => {
-    setSelected(null); setEdge(null); selectPlan(null); setGeometry(null); setError('')
+    setSelected(null); setEdge(null); selectPlan(null); setGeometry(null); setError(''); setLogging(false); setDraft(null); setFocus(null)
     heldByHand.current = false
     if (!run) return
     let active = true
@@ -110,6 +116,12 @@ function App() {
     const next = await command('/api/events', body, 'plan')
     if (next) { setEdge(null); if (next.proposals.length === 0) await goOn() }
   }
+  function startCall(point: Point | null = null) { setSelected(null); setEdge(null); setDraft(point); setLogging(true) }
+  function stopCall() { setLogging(false); setDraft(null) }
+  async function logCall(call: CallDraft) {
+    const next = await command('/api/events', { trigger: 'call', ...call }, 'plan')
+    if (next) { stopCall(); if (next.proposals.length === 0) await goOn() }
+  }
   /** Operations go on once the dispatcher has decided, unless a trainer paused them. */
   async function goOn() { if (!heldByHand.current) await command('/api/simulation/play') }
   async function approve(signals: boolean) {
@@ -147,7 +159,14 @@ function App() {
   }, [state, run, offline, busy, playing, command])
 
   const select = (id: string | null) => { setEdge(null); setSelected((current) => current === id ? null : id) }
-  function openMenu(event: React.MouseEvent, kind: 'unit' | 'task' | 'road', id: string) {
+  const showMenu = (event: React.MouseEvent, items: MenuItem[]) =>
+    setMenu({ x: Math.min(event.clientX, window.innerWidth - 200), y: Math.min(event.clientY, window.innerHeight - 130), items })
+  function mapMenu(event: React.MouseEvent, point: Point, road: string | null) {
+    const items: MenuItem[] = [{ label: 'Log emergency here', run: () => startCall(point) }]
+    if (road && world) items.push({ label: 'Close road for 4 min', run: () => void inject('road_closure', road), disabled: road in world.closed_edges })
+    showMenu(event, items)
+  }
+  function openMenu(event: React.MouseEvent, kind: 'unit' | 'task', id: string) {
     event.preventDefault(); event.stopPropagation()
     if (!world) return
     const items: MenuItem[] = []
@@ -158,21 +177,22 @@ function App() {
     } else if (kind === 'task') {
       items.push({ label: world.tasks[id].priority === 'critical' ? 'Lower to priority 2' : 'Raise to priority 1', run: () => void inject('priority_change', id) },
         { label: 'Change hospital', run: () => void inject('destination_change', id) })
-    } else items.push({ label: 'Close road for 4 min', run: () => void inject('road_closure', id), disabled: id in world.closed_edges })
-    if (kind !== 'road') items.push({ label: 'Show details', run: () => { setEdge(null); setSelected(id) } })
-    setMenu({ x: Math.min(event.clientX, window.innerWidth - 200), y: Math.min(event.clientY, window.innerHeight - 130), items })
+    }
+    items.push({ label: 'Show details', run: () => { setEdge(null); setSelected(id) } })
+    showMenu(event, items)
   }
 
   const keys = useRef<(event: KeyboardEvent) => void>(() => {})
   keys.current = (event) => {
     if (event.key === 'F9') { event.preventDefault(); setSession(!session); return }
-    if (event.key === 'Escape') { setMenu(null); setEvaluation(false); setSession(false); setSelected(null); setEdge(null); return }
+    if (event.key === 'Escape') { setMenu(null); setEvaluation(false); setSession(false); setSelected(null); setEdge(null); stopCall(); return }
     if (typing(event.target) || event.ctrlKey || event.altKey || event.metaKey || !state || offline || busy) return
     const injected = { F2: 'new_emergency', F4: 'equipment_request', F8: 'scenario' }[event.key]
     if (injected) { event.preventDefault(); if (!event.repeat) void inject(injected); return }
     const onControl = event.target instanceof HTMLElement && event.target.closest('button, a, [role=separator], summary')
     if (event.repeat || evaluation) return
     if (event.key === ' ' && !onControl) { event.preventDefault(); control(playing ? 'pause' : 'play') }
+    else if (event.key.toLowerCase() === 'n') { event.preventDefault(); startCall() }
     else if (event.key.toLowerCase() === 'r') void ask()
     else if (pending && event.key >= '1' && event.key <= '3') { const option = state.proposals[Number(event.key) - 1]; if (option) selectPlan(option.proposal_id) }
     else if (pending && event.key.toLowerCase() === 'x') void reject()
@@ -210,7 +230,7 @@ function App() {
       <time className="clock">{timeOfDay(state.world.sim_time_s, true)}</time>
     </header>
     <div className="left" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${unitHeight}px` }}>
-      <CallQueue {...common}/>
+      <CallQueue {...common} onNew={() => startCall()}/>
       <Splitter axis="y" value={unitHeight} min={120} max={520} invert onChange={setUnitHeight}/>
       <UnitBoard {...common}/>
     </div>
@@ -218,8 +238,11 @@ function App() {
     <main className="center" style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${dockHeight}px` }}>
       <div className="map-pane">
         {geometry && geometry.network === state.network ? <CityMap key={run} geometry={geometry} state={state} proposal={plan} selected={selected} onSelect={(id) => { if (id) select(id); else setSelected(null) }}
-          edge={edge} onEdge={setEdge} onMenu={openMenu} satellite={satellite}/> : <p className="empty">Loading the map</p>}
-        <Inspector state={state} geometry={geometry} place={place} selected={selected} edge={edge} busy={Boolean(busy)} onEvent={(kind, ref) => void inject(kind, ref)} onClose={() => { setSelected(null); setEdge(null) }}/>
+          edge={edge} onEdge={setEdge} onMenu={openMenu} onMapMenu={mapMenu} satellite={satellite} traffic={traffic}
+          draft={draft} picking={logging} onPick={setDraft} focus={focus}/> : <p className="empty">Loading the map</p>}
+        {logging && geometry ? <NewCall geometry={geometry} point={draft} busy={Boolean(busy)} onClose={stopCall} onSubmit={(call) => void logCall(call)}
+          onPoint={(point, show) => { setDraft(point); if (show) setFocus({ at: point, key: Date.now() }) }}/>
+        : <Inspector state={state} geometry={geometry} place={place} selected={selected} edge={edge} busy={Boolean(busy)} onEvent={(kind, ref) => void inject(kind, ref)} onClose={() => { setSelected(null); setEdge(null) }}/>}
         {plan && !isStale(state) && planActions(plan, state.world).length > 0 && <p className="map-key"><i/>Suggested route</p>}
       </div>
       <Splitter axis="y" value={dockHeight} min={110} max={480} invert onChange={setDockHeight}/>
@@ -237,10 +260,11 @@ function App() {
       onReport={async (id) => Boolean(await command('/api/events', { trigger: 'report', report_id: id }, 'plan'))}/>
     <footer className="status">
       <span className={`link ${connection}`}>{connection === 'live' ? 'Connected' : connection === 'polling' ? 'Connected (slow)' : connection === 'offline' ? 'Connection lost' : 'Reconnecting'}</span>
-      <span>{state.network === 'ljubljana' ? 'Ljubljana, Tabor and UKC' : 'Training grid'}</span>
+      <span>{state.network === 'ljubljana' ? 'Ljubljana' : 'Training grid'}</span>
       <span>Plan {state.world.plan_revision}</span>
       <span className="grow"/>
       {geometry?.network === 'ljubljana' && <button aria-pressed={satellite} onClick={() => setSatellite(!satellite)}>Aerial photo</button>}
+      <button aria-pressed={traffic} onClick={() => setTraffic(!traffic)}>Traffic</button>
       <button aria-pressed={night} onClick={() => setNight(!night)}>Night</button>
       <button aria-pressed={session} title="F9" onClick={() => setSession(!session)}>Training</button>
     </footer>

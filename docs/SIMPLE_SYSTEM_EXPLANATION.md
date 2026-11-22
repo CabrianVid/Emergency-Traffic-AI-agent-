@@ -135,9 +135,10 @@ orange: in the call list, units, map and timeline.
 | Suggestion, `1`-`3` | View another option; map, timeline and lists follow |
 | Approve / Confirm (`Enter`), Reject (`X`), Recalculate (`R`) | Act on the options |
 | Clear traffic lights | Green wave for the listed units |
+| New emergency (`N`), or right-click the map | Log where it happened (street or map), priority, what, ALS; the AI then suggests |
 | Crew report box | Text to a validated event, then "Correct, find a response" |
 | Click a unit, call or road | Details and actions; right-click for the same menu |
-| Aerial photo, Night | Display |
+| Aerial photo, Traffic, Night | Display |
 | Training (`F9`, bottom right) | Run/pause (`Space`), +30 s, restart, speed, area, script, evaluation results |
 | `F2` / `F4` / `F8` | Send an emergency call / equipment request / scripted incident |
 

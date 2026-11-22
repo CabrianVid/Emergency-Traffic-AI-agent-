@@ -9,15 +9,18 @@ Branch `simplify-decision-flow`. Plain-English guide with all results:
   options, approve/reject/recalculate, signal priority, live OpenAI ranking with
   a labeled fallback, Monte Carlo benchmark, replay (headless and in the window,
   from the dashboard and from a folder holding only the published bundle).
+- **Dashboard city:** live area is 5.2 x 4 km of Ljubljana (2,589 road edges, 140 signals);
+  the dispatcher can log an emergency at any reachable place (798 junctions).
 - **Dashboard:** redesigned as an operator desk (2026-11-22): AI co-dispatcher panel,
   simulation controls behind Training (`F9`), aerial base map. Checked in the browser
   at 1600x900 and 1366x768.
-- **Tests:** 74 pass (`pytest tests/ -q`), frontend builds. No automated test calls
+- **Tests:** 76 pass (`pytest tests/ -q`), frontend builds. No automated test calls
   the real API; live ranking was checked by hand and by the benchmark.
 - **Measured:** 5,000 runs, 4,995 valid. The B1 central-queue baseline beats AI
   dispatch by 29.0 s [24.3, 34.0]; AI dispatch beats B0 by 41.1 s; the AI ranking
   adds 5.6 s; signal priority adds nothing.
-- **Second generation built, not evaluated:** waiting-queue option, free-unit
+- **Second generation built, not evaluated:** waiting-queue option, critical calls to
+  the unit that arrives first (30 seen scenarios: R1Q 169.8 s, B1 169.2 s, a tie), free-unit
   trigger (benchmark and dashboard), schedules re-estimated from now, and engine 2
   (below). Checked on 10 seen scenarios only: 50/50 runs valid.
 - **Next step:** freeze, then run the fresh seeds (about 2.5-3.5 h, about $1):

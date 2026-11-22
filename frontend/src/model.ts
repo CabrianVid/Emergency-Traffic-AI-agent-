@@ -33,13 +33,14 @@ export interface World {
   dispatch_messages: Notification[]
 }
 export interface Geometry {
-  network: Network; label: string; bounds: [number, number, number, number]
+  network: Network; label: string; bounds: [number, number, number, number]; utm_offset: Point
   nodes: Record<string, Point>; signals: Record<string, Point>
   edges: Record<string, { shape: Point[]; name: string; lanes: number }>
 }
 export interface Telemetry {
   fleet?: Record<string, { xy: Point; edge: string; speed_mps: number; route: string[] }>
   signals?: Record<string, { phase: number; state: string }>
+  serving?: string[]; traffic?: Record<string, Point>
 }
 export interface Activity {
   kind: string; sim_time_s: number; message?: string; vehicle_id?: string; task_id?: string
@@ -79,6 +80,7 @@ export interface Snapshot {
   world: World | null; telemetry: Telemetry; proposals: Proposal[]; proposal_issues: string[]
   before: Record<string, Stop[]> | null; activity: Activity[]; metrics: Metrics
   recommendation: Recommendation | null; decision_mode: string; signal_priority_active: boolean
+  notes: Record<string, string>
 }
 export interface Interpretation {
   source: string; valid: boolean; report_id: string | null; summary?: string; error?: string
@@ -151,12 +153,24 @@ export function unitState(vehicle: Vehicle, state: Snapshot, geometry: Geometry 
   if (!stop?.task_id) return { key: 'free', label: 'Available' }
   const live = state.telemetry.fleet?.[vehicle.id]
   const node = geometry?.nodes[stop.node_id]
-  const there = live && node && live.speed_mps < 0.3 && Math.hypot(live.xy[0] - node[0], live.xy[1] - node[1]) < 40
+  const there = state.telemetry.serving?.includes(vehicle.id)
+    ?? (live && node && live.speed_mps < 0.3 && Math.hypot(live.xy[0] - node[0], live.xy[1] - node[1]) < 40)
   if (stop.kind === 'pickup') return there ? { key: 'scene', label: 'On scene' } : { key: 'enroute', label: 'En route' }
   return there ? { key: 'hospital', label: 'Handing over' } : { key: 'transport', label: 'Transporting' }
 }
 
 // -- places ---------------------------------------------------------------------
+/** The road closest to a point: its edge, name and distance in metres. */
+export function nearestRoad(geometry: Geometry, [x, y]: Point) {
+  let best = { id: '', name: '', distance: Infinity }
+  for (const [id, road] of Object.entries(geometry.edges)) for (let i = 1; i < road.shape.length; i++) {
+    const [[ax, ay], [bx, by]] = [road.shape[i - 1], road.shape[i]]
+    const along = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2 || 1)))
+    const distance = Math.hypot(x - ax - along * (bx - ax), y - ay - along * (by - ay))
+    if (distance < best.distance) best = { id, name: road.name, distance }
+  }
+  return best
+}
 export type Place = (node: string) => string
 export function buildPlaces(geometry: Geometry | null, world: World | null): Place {
   const hospitals = new Map(Object.values(world?.receiving_sites ?? {}).map((site) => [site.node_id, `Hospital ${site.id}`]))
@@ -169,9 +183,10 @@ export function buildPlaces(geometry: Geometry | null, world: World | null): Pla
     if (point && geometry) for (const road of Object.values(geometry.edges)) {
       if (!road.name) continue
       for (const end of [road.shape[0], road.shape[road.shape.length - 1]])
-        if (Math.hypot(end[0] - point[0], end[1] - point[1]) < 15) names.add(road.name)
+        if (Math.hypot(end[0] - point[0], end[1] - point[1]) < 20) names.add(road.name)
     }
-    const label = [...names].slice(0, 2).join(' / ') || `Junction ${node}`
+    if (!names.size && point && geometry) names.add(nearestRoad(geometry, point).name)
+    const label = [...names].filter(Boolean).slice(0, 2).join(' / ') || 'Unnamed road'
     cache.set(node, label)
     return label
   }

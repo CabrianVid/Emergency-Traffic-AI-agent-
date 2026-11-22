@@ -94,7 +94,7 @@ function Decision(props: Props & { since: number }) {
   const stale = isStale(state)
   const trigger = triggerOf(state)
   return <section className="decision" aria-live="polite">
-    {trigger && <p className="trigger"><b>{trigger.title}</b><span>{trigger.tasks.map((id) => world.tasks[id] ? `${id}, ${place(world.tasks[id].pickup_node)}` : id).join(' · ')}</span></p>}
+    {trigger && <p className="trigger"><b>{trigger.title}</b><span>{trigger.tasks.map((id) => world.tasks[id] ? `${id}, ${place(world.tasks[id].pickup_node)}${state.notes[id] ? `, ${state.notes[id]}` : ''}` : id).join(' · ')}</span></p>}
     <p className="eyebrow"><span>{single ? 'Suggestion to confirm' : byAI ? `Suggestion, ${plans.length} options` : `${plans.length} options`}</span><time title="Time since the suggestion">{clock(seconds)}</time></p>
     <h2>{planHeadline(chosen, world)}</h2>
     <Actions plan={chosen} world={world} place={place} onSelect={onSelect}/>

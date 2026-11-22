@@ -1,27 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { isStale, needsUnit, openTasks, pickedUp, planActions, priorityRank, shortId, unitState } from './model'
-import outerRoads from './outerRoads.json'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { isStale, nearestRoad, needsUnit, openTasks, pickedUp, planActions, priorityRank, shortId, unitState } from './model'
 import type { Geometry, Point, Proposal, Snapshot } from './model'
 
 const line = (shape: Point[]) => shape.map(([x, y]) => `${x},${-y}`).join(' ')
-// Streets around the operational network, for orientation only: units do not use them.
-const OUTER = (outerRoads as unknown as { name: string; width: number; shape: Point[] }[])
-  .map((road) => ({ ...road, points: line(road.shape) }))
-// The bundled aerial covers this area, in metres of the Ljubljana network.
-const AERIAL = { x: -700, y: -1450, width: 2685, height: 2000 }
+// UTM area covered by the bundled aerial photo: left, bottom, right, top.
+const AERIAL = [459936.45, 5098370.81, 465128.78, 5102355.52]
 
 interface Props {
   geometry: Geometry; state: Snapshot; proposal?: Proposal
   selected: string | null; onSelect: (id: string | null) => void
   edge: string | null; onEdge: (id: string | null) => void
-  onMenu: (event: React.MouseEvent, kind: 'unit' | 'task' | 'road', id: string) => void
-  satellite: boolean
+  onMenu: (event: React.MouseEvent, kind: 'unit' | 'task', id: string) => void
+  onMapMenu: (event: React.MouseEvent, point: Point, road: string | null) => void
+  /** While an emergency is being logged: its location so far, and where to report a click. */
+  draft: Point | null; picking: boolean; onPick: (point: Point) => void; focus: { at: Point; key: number } | null
+  satellite: boolean; traffic: boolean
 }
+
+/** All streets, merged into a few paths so the city stays cheap to draw. */
+const Roads = memo(function Roads({ geometry, u }: { geometry: Geometry; u: number }) {
+  const classes = useMemo(() => {
+    const paths: [string[], string[], string[]] = [[], [], []]
+    for (const road of Object.values(geometry.edges))
+      paths[Math.min(3, road.lanes) - 1].push('M' + road.shape.map(([x, y]) => `${x.toFixed(1)} ${(-y).toFixed(1)}`).join('L'))
+    return paths.map((path) => path.join(''))
+  }, [geometry])
+  const widths = [5.1, 7.2, 9.3].map((metres, i) => Math.max(metres, (1.5 + i * 0.8) * u))
+  return <><g className="road-casing">{classes.map((d, i) => <path key={i} d={d} strokeWidth={widths[i] + 1.6 * u}/>)}</g>
+    <g className="road">{classes.map((d, i) => <path key={i} d={d} strokeWidth={widths[i]}/>)}</g></>
+})
 
 /** One label per street, on its longest straight piece. */
 function streetLabels(geometry: Geometry) {
   const best = new Map<string, { length: number; at: Point; angle: number }>()
-  for (const road of [...Object.values(geometry.edges), ...(geometry.network === 'ljubljana' ? OUTER : [])]) {
+  for (const road of Object.values(geometry.edges)) {
     if (!road.name) continue
     for (let i = 1; i < road.shape.length; i++) {
       const [a, b] = [road.shape[i - 1], road.shape[i]]
@@ -33,10 +45,10 @@ function streetLabels(geometry: Geometry) {
       best.set(road.name, { length, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], angle })
     }
   }
-  return [...best].map(([name, value]) => ({ name, ...value }))
+  return [...best].map(([name, value]) => ({ name, ...value })).sort((a, b) => b.length - a.length)
 }
 
-export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, satellite }: Props) {
+export function CityMap({ geometry, state, proposal, selected, onSelect, edge, onEdge, onMenu, onMapMenu, draft, picking, onPick, focus, satellite, traffic }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Point>([800, 500])
   const [view, setView] = useState<{ zoom: number; center: Point } | null>(null)
@@ -54,15 +66,16 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
   }, [])
 
   const [left, bottom, right, top] = geometry.bounds
-  const margin = geometry.network === 'ljubljana' ? 1.3 : 1.05
-  const fit = Math.max((right - left) * margin / size[0], (top - bottom) * margin / size[1]) // metres per pixel
+  const [wide, high] = [(right - left) / size[0], (top - bottom) / size[1]]
+  // Fill the pane when the shapes are close; never cut off more than a little.
+  const fit = Math.max(Math.min(wide, high), Math.max(wide, high) * 0.9) // metres per pixel
   const zoom = view?.zoom ?? 1
   const center = view?.center ?? [(left + right) / 2, -(bottom + top) / 2] as Point
   const u = fit / zoom
   const origin: Point = [center[0] - size[0] * u / 2, center[1] - size[1] * u / 2]
 
   function zoomTo(factor: number, at: Point = center) {
-    const next = Math.max(0.8, Math.min(6, zoom * factor))
+    const next = Math.max(0.8, Math.min(16, zoom * factor))
     const ratio = zoom / next
     setView({ zoom: next, center: [at[0] + (center[0] - at[0]) * ratio, at[1] + (center[1] - at[1]) * ratio] })
   }
@@ -82,10 +95,19 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
     return () => element.removeEventListener('wheel', onWheel)
   }, [])
 
-  const roads = useMemo(() => Object.entries(geometry.edges).map(([id, road]) => ({
-    id, name: road.name, points: line(road.shape), width: 3 + road.lanes * 2.1,
-  })), [geometry])
-  const labels = useMemo(() => streetLabels(geometry), [geometry])
+  useEffect(() => {
+    if (focus) setView((current) => ({ zoom: Math.max(current?.zoom ?? 1, 3), center: [focus.at[0], -focus.at[1]] }))
+  }, [focus?.key]) // eslint-disable-line
+  const allLabels = useMemo(() => streetLabels(geometry), [geometry])
+  // Longest streets first; skip a label that would sit on another one.
+  const labels = useMemo(() => {
+    const placed: Point[] = []
+    return allLabels.filter((l) => {
+      if (l.length / u < l.name.length * 3.6 || placed.some((p) => Math.hypot(p[0] - l.at[0], p[1] - l.at[1]) < 90 * u)) return false
+      placed.push(l.at)
+      return true
+    })
+  }, [allLabels, u])
   const tasks = openTasks(world)
   const selectedTask = selected ? world.tasks[selected] : undefined
   const focusUnit = selectedTask?.assigned_vehicle_id ?? (selected && world.vehicles[selected] ? selected : null)
@@ -106,7 +128,17 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
     return heading.current[id].angle
   }
 
-  return <div className={`map ${satellite ? 'satellite' : ''}`} ref={box}>
+  function pointAt(event: React.MouseEvent): Point {
+    const rect = box.current!.getBoundingClientRect()
+    return [origin[0] + (event.clientX - rect.left) * u, -(origin[1] + (event.clientY - rect.top) * u)]
+  }
+  /** The road under the pointer, within a few pixels. */
+  function roadAt(point: Point) {
+    const road = nearestRoad(geometry, point)
+    return road.distance < Math.max(8 * u, 6) ? road.id : null
+  }
+
+  return <div className={`map ${satellite ? 'satellite' : ''} ${picking ? 'picking' : ''}`} ref={box}>
     <svg viewBox={`${origin[0]} ${origin[1]} ${size[0] * u} ${size[1] * u}`} role="img" aria-label="Live map of units, calls and hospitals"
       onPointerDown={(event) => { if (event.button === 0) drag.current = { x: event.clientX, y: event.clientY, moved: false } }}
       onPointerMove={(event) => {
@@ -120,18 +152,19 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
       onPointerUp={() => { window.setTimeout(() => { drag.current = null }) }}
       onPointerLeave={() => { drag.current = null }}
       onClick={(event) => {
-        const target = event.target as Element
-        if (clicked() && (target === event.currentTarget || target.tagName === 'image')) { onSelect(null); onEdge(null) }
+        if (!clicked() || (!picking && (event.target as Element).closest('.unit, .call'))) return
+        const point = pointAt(event)
+        if (picking) { onPick(point); return }
+        const road = roadAt(point)
+        onSelect(null); onEdge(road === edge ? null : road)
       }}
-      onContextMenu={(event) => event.preventDefault()}>
-      {geometry.network === 'ljubljana' && <image className="aerial" href="/ljubljana-aerial.jpg" {...AERIAL} preserveAspectRatio="none"/>}
-      {geometry.network === 'ljubljana' && <g className="outer">
-        <g className="road-casing">{OUTER.map((r, i) => <polyline key={i} points={r.points} strokeWidth={r.width + 2 * u}/>)}</g>
-        <g className="road">{OUTER.map((r, i) => <polyline key={i} points={r.points} strokeWidth={r.width}/>)}</g></g>}
-      <g className="road-casing">{roads.map((r) => <polyline key={r.id} points={r.points} strokeWidth={r.width + 2 * u}/>)}</g>
-      <g className="road">{roads.map((r) => <polyline key={r.id} points={r.points} strokeWidth={r.width} className={r.id === edge ? 'picked' : ''}
-        onClick={() => { if (clicked()) { onSelect(null); onEdge(r.id === edge ? null : r.id) } }}
-        onContextMenu={(event) => onMenu(event, 'road', r.id)}><title>{r.name || 'Unnamed road'}</title></polyline>)}</g>
+      onContextMenu={(event) => { event.preventDefault(); const point = pointAt(event); onMapMenu(event, point, roadAt(point)) }}>
+      {geometry.network === 'ljubljana' && <image className="aerial" href="/ljubljana-aerial.jpg" preserveAspectRatio="none"
+        x={AERIAL[0] + geometry.utm_offset[0]} y={-(AERIAL[3] + geometry.utm_offset[1])} width={AERIAL[2] - AERIAL[0]} height={AERIAL[3] - AERIAL[1]}/>}
+      <Roads geometry={geometry} u={u}/>
+      {edge && geometry.edges[edge] && <polyline className="picked" points={line(geometry.edges[edge].shape)} strokeWidth={6 * u}/>}
+      {traffic && <g className="traffic">{Object.entries(state.telemetry.traffic ?? {}).map(([id, [x, y]]) =>
+        <circle key={id} r={Math.max(1.6 * u, 2.2)} style={{ transform: `translate(${x}px,${-y}px)` }}/>)}</g>}
 
       {Object.entries(fleet).map(([id, live]) => world.vehicles[id] && world.vehicles[id].status !== 'broken' && <g key={id}
         className={`route ${unitState(world.vehicles[id], state, geometry).key}`} opacity={focusUnit && focusUnit !== id ? 0.2 : 0.9}>
@@ -167,7 +200,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
         const p = geometry.nodes[task.pickup_node]
         if (!p) return null
         return <g key={task.id} className={`call p${priorityRank(task)} ${needsUnit(task) ? 'open' : ''} ${selected === task.id ? 'selected' : ''}`}
-          transform={`translate(${p[0]},${-p[1]}) scale(${u})`} onClick={() => { if (clicked()) onSelect(task.id) }}
+          transform={`translate(${p[0]},${-p[1]}) scale(${u})`} onClick={() => { if (clicked() && !picking) onSelect(task.id) }}
           onContextMenu={(event) => onMenu(event, 'task', task.id)}>
           {needsUnit(task) && task.priority === 'critical' && <circle className="pulse" r={17}/>}
           <path className="pin" d="M0,-13 L11,0 L0,13 L-11,0 Z"/><text className="pin-text" y={4.2}>{priorityRank(task)}</text>
@@ -180,7 +213,7 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
         const status = unitState(vehicle, state, geometry)
         const action = actions.find((a) => a.unit === vehicle.id)
         return <g key={vehicle.id} className={`unit ${status.key} ${selected === vehicle.id ? 'selected' : ''}`}
-          style={{ transform: `translate(${p[0]}px,${-p[1]}px)` }} onClick={() => { if (clicked()) onSelect(vehicle.id) }}
+          style={{ transform: `translate(${p[0]}px,${-p[1]}px)` }} onClick={() => { if (clicked() && !picking) onSelect(vehicle.id) }}
           onContextMenu={(event) => onMenu(event, 'unit', vehicle.id)}>
           <g transform={`scale(${u})`}>
             {selected === vehicle.id && <circle className="halo" r={17}/>}
@@ -191,6 +224,8 @@ export function CityMap({ geometry, state, proposal, selected, onSelect, edge, o
           </g>
         </g>
       })}
+      {draft && <g className="draft" transform={`translate(${draft[0]},${-draft[1]}) scale(${u})`}>
+        <circle className="pulse" r={17}/><path d="M0,0 L-11,-20 A12.5,12.5 0 1 1 11,-20 Z"/><circle className="hole" cy={-25} r={4.5}/></g>}
     </svg>
     <div className="map-tools">
       <button title="Zoom in" aria-label="Zoom in" onClick={() => zoomTo(1.35)}>+</button>

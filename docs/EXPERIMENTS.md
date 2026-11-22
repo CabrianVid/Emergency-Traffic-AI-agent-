@@ -1,5 +1,40 @@
 # Synthetic SUMO experiments
 
+## Final matched grid and Ljubljana evaluation
+
+Use headless SUMO and a fresh output root. Compare `B0` and `B1` with
+`R1Q` (rule-ranked queue-aware options), `A1Q` (AI ranking on the same
+options), and `A2Q` (AI ranking and green-wave priority). The AI
+policies require a working Decisions API connection. An AI fallback
+does not become evidence for either AI policy.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e '.[dashboard,llm,benchmark]'
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.montecarlo run --root experiments/mc-final-local/grid --first-seed 1000 --scenarios 110 --policies B0,B1,R1Q,A1Q,A2Q --jobs 12
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.ljubljana --root experiments/mc-final-local/ljubljana --first-seed 1000 --scenarios 20 --jobs 4
+.\.venv\Scripts\python.exe -m rescueflow.benchmark.final_report experiments/mc-final-local
+```
+
+The two launch commands can run in separate shells. Tune the sum of
+worker counts for available CPU and API throughput. Ljubljana uses the
+bundled OpenStreetMap road graph and the existing joined, actuated SUMO
+signal and junction settings. Call locations and demand are synthetic.
+The generator freezes six ambulances, two modeled receiving locations,
+two to six calls, disruptions and three traffic levels per seed. The
+city and grid seeds use different scenario generators. Pair policies
+within each map. Both maps keep the same modeled 25-second dispatch
+delay and emergency driving rules across policies. The city settings
+disable junction collision checks. This limits safety conclusions
+about those intersections.
+
+The report gives a missed call a 900-second score and averages each
+scenario equally. Percent improvement divides paired seconds saved by
+the paired reference mean. It also reports five-minute reach, P90 among
+reached calls, civilian delay, phase interventions and wins, ties and
+losses. The primary comparisons retain every valid matched pair and
+record invalid runs separately. The summary, Seaborn figures and CSVs
+are in the output root's `report/` folder.
+
 ## Monte Carlo benchmark (2026-11-22)
 
 1,000 seeded scenarios on the 7x7 grid: six ambulances, 2-6 emergencies,

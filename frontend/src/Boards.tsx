@@ -4,10 +4,10 @@ import { logEntries } from './log'
 import { clock, deadline, isStale, needsUnit, nextStop, openTasks, pickedUp, plannedArrival, priorityRank, proposedUnits, shortId, taskLabel, timeOfDay, unitState } from './model'
 import type { Geometry, Place, Proposal, Snapshot, Stop, Task } from './model'
 
-type Menu = (event: React.MouseEvent, kind: 'unit' | 'task' | 'road', id: string) => void
+type Menu = (event: React.MouseEvent, kind: 'unit' | 'task', id: string) => void
 interface Common { state: Snapshot; geometry: Geometry | null; place: Place; proposal?: Proposal; selected: string | null; onSelect: (id: string) => void; onMenu: Menu }
 
-export function CallQueue({ state, place, proposal, selected, onSelect, onMenu }: Common) {
+export function CallQueue({ state, place, proposal, selected, onSelect, onMenu, onNew }: Common & { onNew: () => void }) {
   const world = state.world!
   const now = world.sim_time_s
   const suggested = proposedUnits(isStale(state) ? undefined : proposal, world)
@@ -18,7 +18,7 @@ export function CallQueue({ state, place, proposal, selected, onSelect, onMenu }
     ['On board', tasks.filter(pickedUp)],
   ]
   return <section className="pane queue">
-    <header><h2>Calls and transfers</h2><span>{tasks.length}</span></header>
+    <header><h2>Calls and transfers</h2><button className="new" onClick={onNew}>New emergency<kbd>N</kbd></button></header>
     <div className="scroll">
       {tasks.length === 0 && <p className="empty">No open calls or transfers.</p>}
       {groups.map(([title, rows]) => rows.length > 0 && <div key={title} className={title === 'Needs a unit' ? 'group open' : 'group'}>
@@ -30,7 +30,7 @@ export function CallQueue({ state, place, proposal, selected, onSelect, onMenu }
           return <button key={task.id} className={`call-row ${selected === task.id ? 'selected' : ''}`} onClick={() => onSelect(task.id)} onContextMenu={(event) => onMenu(event, 'task', task.id)}>
             <b className={`prio p${priorityRank(task)}`} title={`Priority ${priorityRank(task)}`}>{priorityRank(task)}</b>
             <span className="call-main"><strong>{task.id}<em>{taskLabel(task)}{task.required_capabilities.length ? `, ${task.required_capabilities.join(' ')}` : ''}</em></strong>
-              <small>{pickedUp(task) ? `to ${place(task.dropoff_node)}` : place(task.pickup_node)}</small></span>
+              <small>{pickedUp(task) ? `to ${place(task.dropoff_node)}` : place(task.pickup_node)}{state.notes[task.id] ? `, ${state.notes[task.id]}` : ''}</small></span>
             <span className="call-side">
               {task.assigned_vehicle_id ? <span className="callsign">{task.assigned_vehicle_id}</span> : null}
               {suggested[task.id] && <span className="suggest" title="Unit in the plan you are viewing"><Mark size={9}/>{suggested[task.id]}</span>}
@@ -142,6 +142,7 @@ export function Inspector({ state, geometry, place, selected, edge, busy, onEven
     rows.push(['Priority', <span key="p"><b className={`prio p${priorityRank(task)}`}>{priorityRank(task)}</b> {task.priority}</span>],
       ['From', place(task.pickup_node)], ['To', place(task.dropoff_node)],
       ['Unit', task.assigned_vehicle_id ?? 'None assigned'])
+    if (state.notes[task.id]) rows.push(['Report', state.notes[task.id]])
     if (task.required_capabilities.length) rows.push(['Needs', task.required_capabilities.join(', ')])
     if (task.latest_pickup_s != null) rows.push(['Reach by', timeOfDay(task.latest_pickup_s)])
     if (task.latest_delivery_s != null) rows.push(['Deliver by', timeOfDay(task.latest_delivery_s)])
