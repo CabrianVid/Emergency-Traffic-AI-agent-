@@ -82,6 +82,7 @@ class TraciSimulationController:
         self.defer_junction_reroutes = False
         self._deferred_reroutes: set[str] = set()
         self._holds: dict[str, float] = {}
+        self._added_at: dict[str, float] = {}
 
     # -- connection lifecycle -------------------------------------------------
 
@@ -222,6 +223,7 @@ class TraciSimulationController:
         self._awaiting_insertion.clear()
         self._deferred_reroutes.clear()
         self._holds.clear()
+        self._added_at.clear()
 
     # -- route/stop bookkeeping ------------------------------------------------
 
@@ -339,7 +341,10 @@ class TraciSimulationController:
         # A re-added vehicle can wait in SUMO's insertion queue while traffic
         # blocks its position. Replace that queued insertion from the same
         # origin instead of adding a second vehicle with the same ID.
-        queued = not live and vehicle.id in traci.simulation.getPendingVehicles()
+        queued = not live and (
+            vehicle.id in traci.simulation.getPendingVehicles()
+            or self._added_at.get(vehicle.id) == traci.simulation.getTime()
+        )
         start_edge, depart_kwargs = self._spawn_origin.get(vehicle.id, (None, {})) if queued else (None, {})
         depart_kwargs = dict(depart_kwargs)
         if live:
@@ -369,11 +374,12 @@ class TraciSimulationController:
                     position = min(lane.getLength(), ahead + 0.1 * (order + 1))
                 adjusted.append((lane, position, entry))
             placements = adjusted
-        if resumed and float(depart_kwargs["departSpeed"]) > traci.vehicletype.getMaxSpeed(type_id):
+        numeric = resumed and depart_kwargs["departSpeed"] != "max"
+        if numeric and float(depart_kwargs["departSpeed"]) > traci.vehicletype.getMaxSpeed(type_id):
             # A unit that loses its critical leg leaves blue-light mode and
             # re-enters at the routine type's maximum speed.
             depart_kwargs["departSpeed"] = f"{traci.vehicletype.getMaxSpeed(type_id):.2f}"
-        if resumed and placements and stop_plan[0]["route_index"] == 0:
+        if numeric and placements and stop_plan[0]["route_index"] == 0:
             # Re-inserting a moving vehicle just before a stop on its current
             # edge: SUMO rejects the insertion ("too close to brake") and the
             # vehicle silently never departs. Cap the re-insertion speed so
@@ -394,8 +400,9 @@ class TraciSimulationController:
         if live or queued:
             traci.vehicle.remove(vehicle.id)
         self._insert_vehicle(vehicle.id, route_id, type_id, depart_kwargs, placements)
+        self._added_at[vehicle.id] = traci.simulation.getTime()
         self._spawn_origin[vehicle.id] = (start_edge, dict(depart_kwargs))
-        if "departSpeed" in depart_kwargs:
+        if numeric:
             self._awaiting_insertion[vehicle.id] = (route_id, type_id, dict(depart_kwargs), placements)
 
         self._stop_queue[vehicle.id] = [
