@@ -59,6 +59,9 @@ def test_ljubljana_report_plan_approval_and_live_recovery(tmp_path, monkeypatch)
         assert state["world"]["assets"]["K1"]["location"]["kind"] == "roadside"
         assert len(state["proposals"]) >= 2
         plan = state["proposals"][0]
+        assert plan["recommended"] and plan["rank"] == 1
+        assert state["recommendation"]["source"] == "deterministic-fallback"
+        assert state["recommendation"]["recommended"] == plan["option_id"]
         assert all(
             edge in geometry["edges"]
             for route in plan["routes"].values() for edge in route
@@ -80,7 +83,63 @@ def test_ljubljana_report_plan_approval_and_live_recovery(tmp_path, monkeypatch)
         assert after["world"]["tasks"]["T3-RECOVERY"]["status"] == "completed"
         assert after["world"]["assets"]["K1"]["location"]["kind"] == "hospital"
         assert after["telemetry"]["fleet"]["R2"]["edge"] == initial["telemetry"]["fleet"]["R2"]["edge"]
-        assert after["metrics"]["comparison"]["a1"]["p90_s"] > 0
+        assert after["metrics"]["comparison"][plan["policy"]]["p90_s"] > 0
         reset = client.post("/api/simulation/reset").json()
         assert reset["run_id"] != initial["run_id"]
         assert reset["world"]["dispatch_messages"] == []
+
+
+def test_structured_events_recommendation_reject_and_signal_priority(tmp_path, monkeypatch):
+    """New emergency, priority change, delay and equipment request produce ranked
+    options; an approval with signal priority executes in SUMO. Destination change
+    is only exercised if a unit is carrying; road closure and a successful
+    breakdown button are not covered here."""
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    with TestClient(create_app(tmp_path, "grid")) as client:
+        state = client.get("/api/state").json()
+        assert "Deterministic fallback" in state["decision_mode"]
+
+        def event(kind, ref=None):
+            response = client.post("/api/events", json={"trigger": "event", "kind": kind, "ref": ref})
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        state = event("new_emergency")
+        call = next(t for t in state["world"]["tasks"] if t.startswith("CALL-"))
+        options = state["proposals"]
+        assert 1 <= len(options) <= 3
+        assert len({o["option_id"] for o in options}) == len(options)
+        assert [o["rank"] for o in options] == list(range(1, len(options) + 1))
+        assert all(call in o["metrics"]["critical_response_eta_s"] for o in options)
+        assert client.post("/api/plans/reject").json()["proposals"] == []
+
+        state = client.post("/api/plans/propose").json()
+        plan = next(o for o in state["proposals"] if o["recommended"])
+        assert plan["signal_priority_units"]
+        approval = client.post(f"/api/plans/{plan['proposal_id']}/approve", json={
+            "expected_plan_revision": plan["based_on_plan_revision"], "idempotency_key": "call",
+            "signal_priority": True,
+        })
+        assert approval.status_code == 200, approval.text
+        state = client.get("/api/state").json()
+        assert state["signal_priority_active"]
+        assert state["world"]["tasks"][call]["assigned_vehicle_id"] == plan["metrics"]["assignments"][call]
+        assert "signal_priority_authorised" in [entry["kind"] for entry in state["activity"]]
+
+        state = client.post("/api/simulation/step", json={"steps": 400}).json()
+        kinds = [entry["kind"] for entry in state["activity"]]
+        assert "priority_requested" in kinds and "restored" in kinds
+        assert state["world"]["tasks"][call]["status"] in ("en_route_dropoff", "completed")
+
+        task = next(t for t, v in state["world"]["tasks"].items() if v["status"] in ("pending", "planned"))
+        for kind, ref in (("priority_change", task), ("vehicle_delay", "R1"), ("equipment_request", None)):
+            state = event(kind, ref)
+            assert state["recommendation"] is not None
+            client.post("/api/plans/reject")
+        assert any(t.startswith("EQ-") for t in state["world"]["tasks"])
+        carrying = next((t for t, v in state["world"]["tasks"].items() if v["status"] == "en_route_dropoff"), None)
+        if carrying:
+            before = state["world"]["tasks"][carrying]["dropoff_node"]
+            state = event("destination_change", carrying)
+            assert state["world"]["tasks"][carrying]["dropoff_node"] != before
+        assert client.post("/api/events", json={"trigger": "event", "kind": "breakdown", "ref": "R99"}).status_code == 422

@@ -90,7 +90,7 @@ class DispatcherAgent:
         ))
 
     def _interpret_rules(self, text: str, world: WorldState) -> Interpretation:
-        vehicles = {value.upper() for value in re.findall(r"\b(?:R\d+|HELI_\d+)\b", text, re.I)}
+        vehicles = {value.upper() for value in re.findall(r"\bR\d+\b", text, re.I)}
         other_incident = re.search(
             r"\b(?:megl\w*|prizemlj\w*|zapr\w*|nov\w*\s+nujn\w*|kapacitet\w*|closure|grounded)\b",
             text, re.I,
@@ -116,9 +116,8 @@ class DispatcherAgent:
         hits = []
         if event.event.type == EventType.new_urgent_task:
             return [TaskImpact(task_id=payload["task_id"], impact="New patient pickup requires a unit")]
-        if event.event.type == EventType.hospital_capacity_changed:
-            site = world.receiving_sites[payload["site_id"]]
-            hits = [task for task in world.tasks.values() if task.dropoff_node == site.node_id]
+        if "task_id" in payload and payload["task_id"] in world.tasks:
+            hits = [world.tasks[payload["task_id"]]]
         elif "vehicle_id" in payload:
             hits = [task for task in world.tasks.values() if task.assigned_vehicle_id == payload["vehicle_id"]]
         return [

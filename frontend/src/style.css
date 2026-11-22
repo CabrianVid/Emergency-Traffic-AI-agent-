@@ -288,3 +288,19 @@ footer span:last-child { display: flex; align-items: center; gap: 6px; }
   .overview-card em { display: block; }
   .schedule-legend { font-size: 8px; }
 }
+
+.plan-badge { padding: 1px 6px; border-radius: 9px; background: #1f4a40; color: var(--teal); font-size: 10px; }
+.plan-prob { color: var(--muted); font: 600 11px var(--mono); }
+.plan-metrics { flex-wrap: wrap; }
+.plan-warn { color: var(--red); font-size: 10px; }
+.recommendation { margin-top: 7px; padding: 7px 8px; border: 1px solid #33574e; border-radius: 7px; background: #1a302c; font-size: 11px; line-height: 1.45; }
+.recommendation.fallback { border-color: #5a4a2c; background: #2c2618; }
+.recommendation small { color: var(--muted); }
+.signal-toggle { display: flex; gap: 6px; align-items: center; font-size: 11px; color: #cedbeb; }
+.event-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
+.event-grid button { font-size: 11px; padding: 5px 6px; }
+.detail-card { margin-top: 8px; padding: 7px 8px; border: 1px solid #37475a; border-radius: 7px; font-size: 11px; }
+.detail-card dl { display: grid; gap: 2px; margin: 5px 0 0; }
+.detail-card dl div { display: flex; justify-content: space-between; gap: 8px; }
+.detail-card dt { color: var(--muted); }
+.detail-card dd { margin: 0; text-align: right; }

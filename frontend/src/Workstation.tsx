@@ -17,9 +17,9 @@ export function Fleet({ world, selected, onSelect }: FleetProps) {
         const current = vehicle.route_stops.find((stop) => stop.service_completed_at_s == null)
         const status = vehicleStatus(vehicle, world)
         return <button className={`fleet-row ${selected === vehicle.id ? 'selected' : ''}`} key={vehicle.id} onClick={() => onSelect(vehicle.id)}>
-          <span className="unit-icon" style={{ color: vehicleColors[vehicle.id] }}>{vehicle.mode === 'ambulance' ? <Truck size={15}/> : <Radio size={14}/>}</span>
-          <span className="fleet-name"><strong>{vehicle.id === 'HELI_1' ? 'HELI 1' : vehicle.id}</strong>
-            <small>{vehicle.capabilities.join(', ')}{current?.task_id && status !== 'broken' ? ` · ${current.task_id}` : ''}{vehicle.mode !== 'ambulance' ? ' · analytical' : ''}</small></span>
+          <span className="unit-icon" style={{ color: vehicleColors[vehicle.id] }}><Truck size={15}/></span>
+          <span className="fleet-name"><strong>{vehicle.id}</strong>
+            <small>{vehicle.capabilities.join(', ')}{current?.task_id && status !== 'broken' ? ` · ${current.task_id}` : ''}</small></span>
           <span className={`fleet-status status-${status}`}>{words(status)}</span>
         </button>
       })}
@@ -106,7 +106,7 @@ export function ActivityLog({ snapshot }: { snapshot: Snapshot }) {
   </section>
 }
 
-export function Results({ metrics, onPolicy, disabled }: { metrics: Metrics; onPolicy: (baseline: boolean) => void; disabled: boolean }) {
+export function Results({ metrics }: { metrics: Metrics }) {
   return <section className="panel results-panel">
     <header className="panel-head"><div className="section-title"><ActivityIcon size={16}/><h2>Run results</h2></div><span className="tag">Observed · simulated</span></header>
     <div className="results-body">
@@ -122,17 +122,6 @@ export function Results({ metrics, onPolicy, disabled }: { metrics: Metrics; onP
       {Object.entries(metrics.deadline_delays_s).length > 0 && <div className="response-list">
         {Object.entries(metrics.deadline_delays_s).map(([task, time]) => <span key={task}>{task} late <strong>+{clock(time)}</strong></span>)}
       </div>}
-      <h3>Ambulance response comparison</h3>
-      <p>Dispatch to observed pickup. Replay the same scenario for each policy. Formal benchmark pending.</p>
-      <table><thead><tr><th>Policy</th><th>Samples</th><th>Average</th><th>P90</th></tr></thead>
-        <tbody>{['b0', 'a1'].map((policy) => {
-          const measured = metrics.comparison[policy]
-          return <tr key={policy}><th>{policy === 'b0' ? 'Baseline B0' : 'Optimized A1'}</th>
-            <td>{measured?.n ?? '—'}</td><td>{clock(measured?.average_s)}</td><td>{clock(measured?.p90_s)}</td></tr>
-        })}</tbody>
-      </table>
-      <div className="button-row"><button disabled={disabled} onClick={() => onPolicy(true)}>Compute B0 only</button>
-        <button disabled={disabled} onClick={() => onPolicy(false)}>Compute A1 only</button></div>
     </div>
   </section>
 }

@@ -1,6 +1,6 @@
 export type Point = [number, number]
 export type Network = 'grid' | 'ljubljana'
-export type Scenario = 'breakdown' | 'urgent' | 'fog'
+export type Scenario = 'breakdown' | 'urgent'
 export type Status = 'available' | 'assigned' | 'carrying' | 'broken' | 'weather_grounded' | string
 
 export interface Stop {
@@ -20,7 +20,7 @@ export interface Asset {
   id: string; status: string; location: { kind: string; ref_id: string }
 }
 export interface Hospital {
-  id: string; node_id: string; slots: { start_s: number; end_s: number; capacity: number }[]
+  id: string; node_id: string; slots?: { start_s: number; end_s: number; capacity: number }[]
 }
 export interface Notification {
   message_id: string; unit_id: string; task_id: string; destination_label: string; sent_at_sim_s: number
@@ -54,6 +54,17 @@ export interface Proposal {
   assignments: Assignment[]; routes: Record<string, string[]>; estimated_deadline_misses: string[]
   equivalent_policies: string[]
   score: { critical_tardiness_s: number; other_weighted_lateness_s: number; assignment_churn: number }
+  option_id: string; strategy: string; description: string; rank: number; recommended: boolean
+  ai_probability: number | null; signal_priority_units: string[]; warnings: string[]
+  metrics: {
+    critical_response_eta_s: Record<string, number>; worst_critical_response_eta_s: number | null
+    unserved_task_ids: string[]; estimated_deadline_misses: string[]; reassigned_task_ids: string[]
+    equipment_delivery_eta_s: Record<string, number | null>; assignments: Record<string, string>
+  }
+}
+export interface Recommendation {
+  source: string; ranking: string[]; recommended: string | null; probabilities: Record<string, number>
+  model: string | null; latency_ms: number | null; cache_hit: boolean; error: string | null; explanation: string
 }
 export interface Metrics {
   civilian_active: number; civilian_observed: number; civilian_time_loss_s: number
@@ -66,6 +77,7 @@ export interface Snapshot {
   network: Network; scenario: Scenario; speed: number; script_applied: boolean
   world: World | null; telemetry: Telemetry; proposals: Proposal[]; proposal_issues: string[]
   before: Record<string, Stop[]> | null; activity: Activity[]; metrics: Metrics
+  recommendation: Recommendation | null; decision_mode: string; signal_priority_active: boolean
 }
 export interface Interpretation {
   source: string; valid: boolean; report_id: string | null; summary?: string; error?: string
@@ -74,13 +86,17 @@ export interface Interpretation {
 }
 
 export const scenarioLabels: Record<Scenario, string> = {
-  breakdown: 'R2 breakdown · K1 recovery', urgent: 'New urgent patient', fog: 'Fog · receiving capacity',
+  breakdown: 'R2 breakdown · K1 recovery', urgent: 'New urgent patient',
 }
-export const profileLabels: Record<string, string> = {
-  baseline: 'B0 · Greedy repair', urgent_first: 'Urgent first', minimum_disruption: 'Least disruption',
+export const strategyLabels: Record<string, string> = {
+  urgent_first: 'Urgent first', minimum_disruption: 'Least disruption', nearest_free_unit: 'Nearest free unit',
+}
+export const sourceLabels: Record<string, string> = {
+  'openai-decisions': 'Ranked by AI', 'single-feasible-option': 'Only feasible option',
+  'deterministic-fallback': 'Deterministic fallback · not AI',
 }
 export const vehicleColors: Record<string, string> = {
-  R1: '#56e2bc', R2: '#70aefa', R3: '#b89af5', R4: '#f4c76a', R5: '#61d6ed', HELI_1: '#96a6bd',
+  R1: '#56e2bc', R2: '#70aefa', R3: '#b89af5', R4: '#f4c76a', R5: '#61d6ed',
 }
 export const terminalStatuses = ['completed', 'interrupted', 'unserved']
 
@@ -93,7 +109,7 @@ export function words(value: string) {
   return value.replaceAll('_', ' ')
 }
 export function taskLabel(task: Task) {
-  if (task.kind === 'equipment_recovery') return 'Recover K1'
+  if (task.kind === 'equipment_recovery') return 'Equipment recovery'
   if (task.kind === 'equipment_delivery') return 'Equipment delivery'
   if (task.kind === 'urgent_response') return 'Urgent response'
   return 'Patient transfer'

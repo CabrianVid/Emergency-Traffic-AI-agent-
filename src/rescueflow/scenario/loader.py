@@ -149,6 +149,7 @@ def build_initial_world(
     world.assets = {
         "K1": Asset(id="K1", capacity_units=1, location=AssetLocation(kind="vehicle", ref_id="R2"), status="in_transit"),
         "K2": Asset(id="K2", capacity_units=1, location=AssetLocation(kind="depot", ref_id="F5"), status="available"),
+        "K3": Asset(id="K3", capacity_units=1, location=AssetLocation(kind="depot", ref_id="G5"), status="available"),
     }
     if node_mapping is not None:
         for site in world.receiving_sites.values():
@@ -159,6 +160,7 @@ def build_initial_world(
             task.pickup_node = node_mapping[task.pickup_node]
             task.dropoff_node = node_mapping[task.dropoff_node]
         world.assets["K2"].location.ref_id = node_mapping["F5"]
+        world.assets["K3"].location.ref_id = node_mapping["G5"]
 
     for vehicle, task, start in ((r2, t3, 0.0), (r3, t2, 0.0), (r5, t5, sim_time_s)):
         vehicle.route_stops, _ = _two_stop_route(vehicle, task, travel, start, world.receiving_sites.values())

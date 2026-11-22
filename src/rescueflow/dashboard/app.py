@@ -16,7 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from rescueflow.dashboard.agent import DispatcherAgent
-from rescueflow.dashboard.service import PROFILES, CommandError, DispatchRun, Network, Profile, Scenario
+from rescueflow.dashboard.service import CommandError, DispatchRun, EventKind, Network, Scenario
+from rescueflow.decision.agent import DecisionAgent
 from rescueflow.events.types import EventDraft, TaskImpact
 from rescueflow.interfaces.protocols import CommitResult
 from rescueflow.models.core import DispatchMessage, PlanProposal, Stop, WorldState
@@ -60,17 +61,21 @@ class RoadClosureEvent(Command):
     duration_s: float = Field(240, gt=0, le=3600)
 
 
-EventCommand = Annotated[ScenarioEvent | ReportEvent | RoadClosureEvent, Field(discriminator="trigger")]
+class StructuredEvent(Command):
+    trigger: Literal["event"]
+    kind: EventKind
+    ref: str | None = Field(None, max_length=120)
 
 
-class ProposeCommand(Command):
-    profiles: list[Profile] = Field(default_factory=lambda: list(PROFILES), min_length=1, max_length=3)
+EventCommand = Annotated[ScenarioEvent | ReportEvent | RoadClosureEvent | StructuredEvent,
+                         Field(discriminator="trigger")]
 
 
 class ApprovalCommand(Command):
     expected_plan_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=120)
     approved_by: str = Field("dispatcher-demo", min_length=1, max_length=100)
+    signal_priority: bool = False
 
 
 class AssignmentProjection(BaseModel):
@@ -86,7 +91,16 @@ class ProposalView(PlanProposal):
     assignments: list[AssignmentProjection]
     estimated_deadline_misses: list[str]
     routes: dict[str, list[str]]
-    equivalent_policies: list[Profile]
+    equivalent_policies: list[str]
+    option_id: str
+    strategy: str
+    description: str
+    rank: int
+    recommended: bool
+    ai_probability: float | None
+    metrics: dict
+    signal_priority_units: list[str]
+    warnings: list[str]
 
 
 class ComparisonRow(BaseModel):
@@ -120,6 +134,9 @@ class DashboardState(BaseModel):
     telemetry: dict
     proposals: list[ProposalView]
     proposal_issues: list[str]
+    recommendation: dict | None = None
+    decision_mode: str = ""
+    signal_priority_active: bool = False
     before: dict[str, list[Stop]] | None
     activity: list[dict]
     metrics: MetricsView
@@ -141,7 +158,10 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
     async def lifespan(app: FastAPI):
         load_dotenv()
         agent = DispatcherAgent()
-        runtime = DispatchRun(root or Path("simulation").resolve(), agent)
+        base = root or Path("simulation").resolve()
+        decision = DecisionAgent(timeout_s=12.0, retries=1, cache_dir=base / "state" / "decision_cache",
+                                 log_path=base / "state" / "decision_log.jsonl")
+        runtime = DispatchRun(base, agent, decision)
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sumo-owner")
         loop = asyncio.get_running_loop()
 
@@ -237,17 +257,24 @@ def create_app(root: Path | None = None, initial_network: Network | None = None)
             return await app.state.submit(app.state.runtime.inject, command.trigger, command.report_id)
         if isinstance(command, RoadClosureEvent):
             return await app.state.submit(app.state.runtime.inject, command.trigger, command.edge_id, command.duration_s)
+        if isinstance(command, StructuredEvent):
+            return await app.state.submit(app.state.runtime.inject, command.trigger, command.ref, None, command.kind)
         return await app.state.submit(app.state.runtime.inject, command.trigger)
 
     @app.post("/api/plans/propose", response_model=DashboardState)
-    async def propose(command: ProposeCommand):
-        return await app.state.submit(app.state.runtime.propose, tuple(dict.fromkeys(command.profiles)))
+    async def propose():
+        """Recalculate feasible options and the AI ranking."""
+        return await app.state.submit(app.state.runtime.propose)
+
+    @app.post("/api/plans/reject", response_model=DashboardState)
+    async def reject():
+        return await app.state.submit(app.state.runtime.reject)
 
     @app.post("/api/plans/{proposal_id}/approve", response_model=CommitResult)
     async def approve(proposal_id: str, command: ApprovalCommand):
         return await app.state.submit(
             app.state.runtime.approve, proposal_id, command.expected_plan_revision,
-            command.idempotency_key, command.approved_by,
+            command.idempotency_key, command.approved_by, command.signal_priority,
         )
 
     @app.get("/api/notifications", response_model=list[DispatchMessage])

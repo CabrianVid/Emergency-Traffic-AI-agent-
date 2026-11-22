@@ -63,7 +63,7 @@ export function CityMap({ geometry, snapshot, proposal, selected, onSelect, edge
         {Object.entries(position).map(([id, telemetry]) => world.vehicles[id]?.status !== 'broken' &&
           <g key={id} className="route-overlay" opacity={focusVehicle && focusVehicle !== id ? '0.28' : '0.95'}>
             {telemetry.route.map((idEdge, index) => geometry.edges[idEdge] &&
-              <polyline key={index} points={path(geometry.edges[idEdge].shape)} stroke={vehicleColors[id]} className="committed-route" />)}
+              <polyline key={index} points={path(geometry.edges[idEdge].shape)} stroke={vehicleColors[id] ?? '#9fb6c9'} className="committed-route" />)}
           </g>)}
         {proposal && Object.entries(proposal.routes).map(([id, route]) =>
           <g key={id} className="route-overlay">
@@ -81,14 +81,11 @@ export function CityMap({ geometry, snapshot, proposal, selected, onSelect, edge
         {Object.values(world.receiving_sites).map((hospital) => {
           const point = geometry.nodes[hospital.node_id]
           if (!point) return null
-          const current = hospital.slots.find((slot) => slot.start_s <= world.sim_time_s && world.sim_time_s < slot.end_s)
-          const capacity = hospital.slots.length ? `${current?.capacity ?? 0} slots this window` : 'Open receiving'
-          const upcoming = hospital.slots.find((slot) => slot.start_s > world.sim_time_s)
           return <g className="hospital-marker" key={hospital.id} transform={`translate(${point[0]},${-point[1]})`}>
             <rect x={-size * .7} y={-size * .7} width={size * 1.4} height={size * 1.4} rx={size * .28} />
             <path className="hospital-cross" d={`M${-size * .33},0h${size * .66}M0,${-size * .33}v${size * .66}`}/>
             <text x={size * .98} y={size * .25} fontSize={size * .83}>{hospital.id}</text>
-            <title>{`${hospital.id} · ${capacity}${upcoming ? ` · ${upcoming.capacity} slots from ${clock(upcoming.start_s)}` : ''}`}</title>
+            <title>{`${hospital.id} · receiving hospital`}</title>
           </g>
         })}
         {Object.values(world.assets).filter((asset) => asset.location.kind === 'roadside').map((asset) => {
@@ -107,12 +104,12 @@ export function CityMap({ geometry, snapshot, proposal, selected, onSelect, edge
           const broken = vehicle.status === 'broken'
           if (!point) return null
           const [x, y] = point
-          const fill = broken ? '#ff857e' : vehicleColors[vehicle.id]
+          const fill = broken ? '#ff857e' : vehicleColors[vehicle.id] ?? '#9fb6c9'
           return <g key={vehicle.id} className="vehicle-marker" transform={`translate(${x},${-y})`}
             onClick={() => onSelect(vehicle.id)} aria-label={vehicle.id}>
             {(focusVehicle === vehicle.id || broken) && <circle className="vehicle-ring" r={size * 1.1} style={{ stroke: fill }} />}
             <circle r={size * .53} fill={fill} opacity={live || broken ? 1 : 0.65} />
-            <text x={size * .78} y={-size * .58} fill={fill} fontSize={size * .79}>{vehicle.id === 'HELI_1' ? 'HELI' : vehicle.id}</text>
+            <text x={size * .78} y={-size * .58} fill={fill} fontSize={size * .79}>{vehicle.id}</text>
             <title>{`${vehicle.id} · ${vehicleStatus(vehicle, world)}${live ? ` · ${Math.round(live.speed_mps * 3.6)} km/h` : ''}`}</title>
           </g>
         })}

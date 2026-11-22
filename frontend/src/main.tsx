@@ -7,7 +7,7 @@ import {
 import { api, useSnapshot } from './connection'
 import { CityMap } from './CityMap'
 import { ActivityLog, Fleet, Results, Schedule } from './Workstation'
-import { clock, profileLabels, scenarioLabels, terminalStatuses, vehicleStatus, words } from './model'
+import { clock, scenarioLabels, sourceLabels, strategyLabels, taskLabel, terminalStatuses, vehicleStatus, words } from './model'
 import type { Geometry, Interpretation, Network, Proposal, Scenario, Snapshot, World } from './model'
 import './style.css'
 
@@ -23,32 +23,72 @@ function Overview({ world, state }: { world: World; state: Snapshot }) {
   const description = kit?.location.kind === 'hospital' ? 'Delivered' : kit?.location.kind === 'roadside' ? 'Awaiting recovery' : 'Tracked custody'
   return <div className="overview">
     <div className="overview-card"><span className="metric-icon teal"><Activity size={17}/></span><div><small>Active tasks</small><strong>{active.length} <em>{active.filter((task) => task.priority === 'critical').length} critical</em></strong></div></div>
-    <div className="overview-card"><span className="metric-icon blue"><Truck size={17}/></span><div><small>Available units</small><strong>{available}<em> / 5 ambulances</em></strong></div></div>
+    <div className="overview-card"><span className="metric-icon blue"><Truck size={17}/></span><div><small>Available units</small><strong>{available}<em> / {Object.keys(world.vehicles).length} ambulances</em></strong></div></div>
     <div className="overview-card"><span className="metric-icon amber"><LocateFixed size={17}/></span><div><small>Equipment K1</small><strong>{kitLocation ?? '—'} <em>{description}</em></strong></div></div>
     <div className="overview-card"><span className="metric-icon violet"><ClipboardCheck size={17}/></span><div><small>Committed plan</small><strong>r{world.plan_revision} <em>{state.proposals.length ? `${state.proposals.length} choices` : 'Human approval'}</em></strong></div></div>
   </div>
 }
 
-function PlanCard({ plan, selected, index, onSelect }: { plan: Proposal; selected: boolean; index: number; onSelect: () => void }) {
-  const reassignments = plan.assignments.filter((task) => task.previous_vehicle_id && task.previous_vehicle_id !== task.vehicle_id).length
-  const recovery = plan.assignments.find((task) => task.task_id.includes('RECOVERY'))
+const eta = (value: number | null | undefined) => value == null ? '—' : clock(value)
+
+function PlanCard({ plan, selected, onSelect }: { plan: Proposal; selected: boolean; onSelect: () => void }) {
+  const metrics = plan.metrics
+  const equipment = Object.entries(metrics.equipment_delivery_eta_s)
   return <button className={`plan-card ${selected ? 'selected' : ''}`} onClick={onSelect} aria-pressed={selected}>
-    <span className="plan-card-head"><span className="plan-letter">{String.fromCharCode(65 + index)}</span>
-      <strong>{profileLabels[plan.policy === 'b0' ? 'baseline' : plan.profile]}</strong>{selected && <Check size={15}/>}</span>
-    <span className="plan-summary">{recovery ? `${recovery.vehicle_id} recovers K1 at ${clock(recovery.pickup_s)}`
-      : `${plan.assignments.length} projected assignments · ${plan.unserved_task_ids.length} unserved`}</span>
-    <span className="plan-metrics"><span>{plan.estimated_deadline_misses.length} deadline misses</span><span>{reassignments} reassigned</span></span>
-    {plan.equivalent_policies.length > 0 && <span className="plan-equivalent">Same schedule as {plan.equivalent_policies.map((profile) => profileLabels[profile]).join(', ')}</span>}
+    <span className="plan-card-head"><span className="plan-letter">{plan.option_id}</span>
+      <strong>{strategyLabels[plan.strategy] ?? plan.strategy}</strong>
+      {plan.recommended && <span className="plan-badge">Recommended</span>}
+      {plan.ai_probability != null && <span className="plan-prob">{Math.round(plan.ai_probability * 100)}%</span>}
+      {selected && <Check size={15}/>}</span>
+    <span className="plan-summary">{plan.description}</span>
+    <span className="plan-metrics">
+      <span>Critical ETA {eta(metrics.worst_critical_response_eta_s)}</span>
+      <span>{metrics.unserved_task_ids.length} unserved</span>
+      <span>{metrics.estimated_deadline_misses.length} est. late</span>
+      <span>{metrics.reassigned_task_ids.length} moved</span>
+    </span>
+    {equipment.length > 0 && <span className="plan-summary">Equipment {equipment.map(([id, value]) => `${id} ${eta(value)}`).join(', ')}</span>}
+    {plan.signal_priority_units.length > 0 && <span className="plan-summary">Traffic-light priority for {plan.signal_priority_units.join(', ')}</span>}
+    {plan.warnings.map((warning) => <span className="plan-warn" key={warning}>{warning}</span>)}
   </button>
 }
 
-function Dispatch({ state, selection, selectPlan, busy, error, command, refresh, road }: {
-  state: Snapshot; selection?: Proposal; selectPlan: (plan: string) => void; busy: boolean; error: string
+function Detail({ state, selected }: { state: Snapshot; selected: string | null }) {
+  const world = state.world
+  if (!world || !selected) return null
+  const unit = world.vehicles[selected]
+  const task = world.tasks[selected]
+  if (!unit && !task) return null
+  const rows: [string, string][] = []
+  if (unit) {
+    const live = state.telemetry.fleet?.[unit.id]
+    const next = unit.route_stops.find((stop) => stop.service_completed_at_s == null)
+    rows.push(['Status', words(vehicleStatus(unit, world))], ['Crew', unit.capabilities.join(', ') || '—'],
+      ['Position', live ? `${Math.round(live.speed_mps * 3.6)} km/h on ${live.edge}` : unit.node_id],
+      ['Equipment', unit.equipment_aboard.join(', ') || 'none'],
+      ['Next stop', next ? `${next.task_id ?? '—'} ${next.kind} · est. ${clock(next.arrival_s)}` : 'none'])
+  } else {
+    rows.push(['Type', taskLabel(task)], ['Priority', task.priority], ['Status', words(task.status)],
+      ['Unit', task.assigned_vehicle_id ?? 'unassigned'],
+      ['Pickup by', clock(task.latest_pickup_s)], ['Deliver by', clock(task.latest_delivery_s)])
+  }
+  return <div className="detail-card"><strong>{unit ? unit.id : task.id}</strong>
+    <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>
+}
+
+function Dispatch({ state, selection, selectPlan, selected, busy, error, command, refresh, road }: {
+  state: Snapshot; selection?: Proposal; selectPlan: (plan: string) => void; selected: string | null; busy: boolean; error: string
   command: (path: string, body?: object) => Promise<Snapshot | undefined>
   refresh: (path: string, body: object) => Promise<Interpretation | undefined>; road: string | null
 }) {
   const [message, setMessage] = useState('')
   const [interpretation, setInterpretation] = useState<Interpretation | null>(null)
+  const [priority, setPriority] = useState(true)
+  const unit = selected ? state.world?.vehicles[selected] : undefined
+  const task = selected ? state.world?.tasks[selected] : undefined
+  const openTask = task && !terminalStatuses.includes(task.status) ? task : undefined
+  const trigger = (kind: string, ref: string | null = null) => void command('/api/events', { trigger: 'event', kind, ref })
+  const recommendation = state.recommendation
   const ready = state.simulator !== 'unavailable' && Boolean(state.world)
   const canApprove = selection && selection.based_on_plan_revision === state.world?.plan_revision
   const impacted = state.activity.findLast((event) => event.impacted_tasks?.length)
@@ -84,6 +124,16 @@ function Dispatch({ state, selection, selectPlan, busy, error, command, refresh,
           <button disabled={busy} onClick={applyReport}>Apply incident and compute choices <ArrowRight size={14}/></button>
         </>}
       </div>}
+      <Detail state={state} selected={selected}/>
+      <div className="dispatch-label"><span>Report an unexpected event</span></div>
+      <div className="event-grid">
+        <button disabled={!ready || busy} onClick={() => trigger('new_emergency')}>New emergency</button>
+        <button disabled={!ready || busy} onClick={() => trigger('equipment_request')}>Equipment needed</button>
+        {unit && unit.status !== 'broken' && <button disabled={busy} onClick={() => trigger('breakdown', unit.id)}>{unit.id} broke down</button>}
+        {unit && <button disabled={busy} onClick={() => trigger('vehicle_delay', unit.id)}>{unit.id} delayed 2 min</button>}
+        {openTask && <button disabled={busy} onClick={() => trigger('priority_change', openTask.id)}>{openTask.id}: {openTask.priority === 'critical' ? 'lower to high' : 'raise to critical'}</button>}
+        {openTask && <button disabled={busy} onClick={() => trigger('destination_change', openTask.id)}>{openTask.id}: change hospital</button>}
+      </div>
       <div className="scenario-actions">
         <button disabled={!ready || busy || state.script_applied || !breakdownAvailable} onClick={() => void command('/api/events', { trigger: 'scenario' })}>
           <AlertTriangle size={14}/>{state.script_applied || !breakdownAvailable ? 'Reset to replay scripted incident' : 'Trigger scripted incident'}
@@ -93,16 +143,21 @@ function Dispatch({ state, selection, selectPlan, busy, error, command, refresh,
       </div>
       {error && <p className="error-box" role="alert"><AlertTriangle size={14}/>{error}</p>}
       <div className="plans-head">
-        <div><h3>Repair choices</h3><small>Estimated from SUMO road ETAs</small></div>
-        <button className="icon-button" title="Regenerate choices" aria-label="Regenerate choices" disabled={!ready || busy}
-          onClick={() => void command('/api/plans/propose', {})}><RotateCcw size={15}/></button>
+        <div><h3>Recommendations</h3><small>{recommendation ? sourceLabels[recommendation.source] ?? recommendation.source : state.decision_mode}</small></div>
+        <button className="icon-button" title="Recalculate options" aria-label="Recalculate options" disabled={!ready || busy}
+          onClick={() => void command('/api/plans/propose')}><RotateCcw size={15}/></button>
       </div>
       {impacted?.impacted_tasks && <p className="impacted">Affected tasks · {impacted.impacted_tasks.join(', ')}</p>}
-      {state.proposals.length === 0 && state.proposal_issues.length === 0 && <p className="proposal-empty">Interpret a report or trigger an incident to compare feasible schedules.</p>}
+      {recommendation && state.proposals.length > 0 && <div className={`recommendation ${recommendation.source === 'openai-decisions' ? '' : 'fallback'}`}>
+        <p>{recommendation.explanation}</p>
+        <small>{recommendation.model ? `${recommendation.model} · ${Math.round(recommendation.latency_ms ?? 0)} ms${recommendation.cache_hit ? ' · cached' : ''}`
+          : recommendation.error ? `AI unavailable: ${recommendation.error}` : 'No model call needed'}</small>
+      </div>}
+      {state.proposals.length === 0 && state.proposal_issues.length === 0 && <p className="proposal-empty">Report an event to compute feasible responses.</p>}
       {state.proposal_issues.length > 0 && <details className="plan-issues"><summary>{state.proposal_issues.length} feasibility notes</summary>
         <ul>{[...new Set(state.proposal_issues)].map((issue) => <li key={issue}>{issue}</li>)}</ul>
       </details>}
-      {state.proposals.map((plan, i) => <PlanCard key={plan.proposal_id} index={i} plan={plan}
+      {state.proposals.map((plan) => <PlanCard key={plan.proposal_id} plan={plan}
         onSelect={() => selectPlan(plan.proposal_id)} selected={plan.proposal_id === selection?.proposal_id}/>)}
       {selection && <div className="approve-block">
         <details className="assignment-details"><summary>Assignments and estimated ETAs</summary>
@@ -111,11 +166,17 @@ function Dispatch({ state, selection, selectPlan, busy, error, command, refresh,
           </li>)}</ul>
           {selection.unserved_task_ids.length > 0 && <p>Unserved · {selection.unserved_task_ids.join(', ')}</p>}
         </details>
-        {!canApprove && <p className="error-box">The plan version changed. Regenerate choices.</p>}
+        {selection.signal_priority_units.length > 0 && <label className="signal-toggle">
+          <input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)}/>
+          Authorize traffic-light priority for {selection.signal_priority_units.join(', ')}</label>}
+        {!canApprove && <p className="error-box">The plan version changed. Recalculate the options.</p>}
         <button className="primary-button" disabled={busy || !ready || !canApprove} onClick={() => void command(
           `/api/plans/${selection.proposal_id}/approve`,
-          { expected_plan_revision: selection.based_on_plan_revision, idempotency_key: selection.proposal_id },
-        )}><Check size={16}/> Approve selected plan</button>
+          { expected_plan_revision: selection.based_on_plan_revision, idempotency_key: selection.proposal_id,
+            signal_priority: priority && selection.signal_priority_units.length > 0 },
+        )}><Check size={16}/> Approve option {selection.option_id}</button>
+        <div className="button-row"><button disabled={busy} onClick={() => void command('/api/plans/reject')}>Reject all</button>
+          <button disabled={busy} onClick={() => void command('/api/plans/propose')}>Recalculate</button></div>
       </div>}
     </div>
   </aside>
@@ -211,12 +272,12 @@ function App() {
         <p>{connection === 'offline' ? 'Start the local FastAPI server to connect.' : 'The workstation will display the SUMO session when it is ready.'}</p></section>}
       {state?.world && <>
         <Overview world={state.world} state={state}/>
-        {results && <Results metrics={state.metrics} disabled={!live || busy} onPolicy={(baseline) => void command('/api/plans/propose', { profiles: baseline ? ['baseline'] : ['urgent_first', 'minimum_disruption'] })}/>}
+        {results && <Results metrics={state.metrics}/>}
         <div className="workspace">
           <Fleet world={state.world} selected={selected} onSelect={select}/>
           <CityMap key={`map-${run}`} geometry={geometry} snapshot={state} proposal={selection}
             selected={selected} onSelect={select} edge={edge} onEdge={setEdge}/>
-          <Dispatch key={`dispatch-${run}`} state={state} selection={selection} selectPlan={selectPlan} busy={busy || connection === 'offline'}
+          <Dispatch key={`dispatch-${run}`} state={state} selection={selection} selectPlan={selectPlan} selected={selected} busy={busy || connection === 'offline'}
             error={error} command={command} refresh={send} road={edge}/>
         </div>
         <div className="bottom-grid"><Schedule snapshot={state} proposal={selection} selected={selected} onSelect={select}/><ActivityLog snapshot={state}/></div>
